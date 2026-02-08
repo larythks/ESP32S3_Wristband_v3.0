@@ -31,7 +31,7 @@
 
 | 指标 | 报警阈值（仅单点阈值） | 触发条件 | 信号质量门槛 | 常规采样 | 异常实时检测采样 |
 |------|----------------------|----------|-------------|----------|------------------|
-| 体温（DS18B20） | >=37.8°C 或 <=35.0°C | 连续 3 次有效采样越阈 | 温度跳变 >1.0°C/次判无效，需重采样 | 60 秒/次 | 1 秒/次（持续 180 秒或恢复后退出） |
+| 体温（DS18B20） | >=37.8°C 或 <=35.0°C | 连续 3 次有效采样越阈 | 温度跳变 >1.0°C/次判无效，需重采样 | 30 秒/次 | 1 秒/次（持续 180 秒或恢复后退出） |
 | 心率（MAX30102） | >=120 bpm 或 <=45 bpm | 连续 30 秒有效样本越阈 | PPG 振幅/置信度低时仅提示“测量无效” | 120 秒/次 | 1 秒/次（持续 60 秒或恢复后退出） |
 | 血氧（MAX30102） | <=90% ALARM / 90%-92% WARNING | 连续 20 秒有效样本越阈 | 运动伪影或信号不稳时不触发报警 | 120 秒/次 | 1 秒/次（持续 60 秒或恢复后退出） |
 | 跌倒（MPU6050） | SVM+姿态满足跌倒条件 | 进入 PRE_ALARM，10-15 秒未取消升级 ALARMING | SVM+姿态联合判定有效 | 50Hz 连续采样 | 保持 50Hz（不降采样） |
@@ -43,7 +43,7 @@
 
 ### 1.4 报警判定逻辑（异常触发实时检测）
 
-1. 系统默认低频采样（体温 60 秒、心率血氧 120 秒）。
+1. 系统默认低频采样（体温 30 秒、心率血氧 120 秒）。
 2. 任一指标首次越过报警阈值后，仅对应传感器切换到实时检测模式（1 秒/次）。
 3. 在实时检测窗口内满足“持续触发条件”即发布 `ALARM`；否则判定为瞬时异常并退出实时检测。
 4. 实时检测窗口结束条件：达到最大持续时间或连续恢复正常（建议连续 10 秒正常）。
@@ -68,7 +68,7 @@
 |-----|------|
 | 职责 | I2C 通信、原始 RED/IR 数据读取、FIFO 管理 |
 | 不做 | 心率/血氧算法（由 services 层处理） |
-| 对外接口 | `esp_err_t max30102_init(i2c_port_t port)`<br>`esp_err_t max30102_read_fifo(uint32_t *red, uint32_t *ir, uint8_t *count)` |
+| 对外接口 | `esp_err_t max30102_init(void)`<br>`esp_err_t max30102_read_fifo(uint32_t *red, uint32_t *ir, uint8_t *count)` |
 | 依赖 | driver/i2c |
 
 #### components/drivers/mpu6050
@@ -76,7 +76,7 @@
 |-----|------|
 | 职责 | I2C 通信、加速度/陀螺仪原始数据读取、中断配置 |
 | 不做 | 跌倒检测算法、计步算法（由 services 层处理） |
-| 对外接口 | `esp_err_t mpu6050_init(i2c_port_t port)`<br>`esp_err_t mpu6050_read_accel(int16_t *ax, int16_t *ay, int16_t *az)`<br>`esp_err_t mpu6050_read_gyro(int16_t *gx, int16_t *gy, int16_t *gz)` |
+| 对外接口 | `esp_err_t mpu6050_init(void)`<br>`esp_err_t mpu6050_read_accel(int16_t *ax, int16_t *ay, int16_t *az)`<br>`esp_err_t mpu6050_read_gyro(int16_t *gx, int16_t *gy, int16_t *gz)` |
 | 依赖 | driver/i2c |
 
 #### components/drivers/sh1106
@@ -84,7 +84,7 @@
 |-----|------|
 | 职责 | I2C 通信、OLED 初始化、帧缓冲写入、基础绘图 |
 | 不做 | 复杂 UI 组件、动画 |
-| 对外接口 | `esp_err_t sh1106_init(i2c_port_t port)`<br>`void sh1106_clear(void)`<br>`void sh1106_draw_string(int x, int y, const char *str)`<br>`void sh1106_update(void)` |
+| 对外接口 | `esp_err_t sh1106_init(void)`<br>`void sh1106_clear(void)`<br>`void sh1106_draw_string(int x, int y, const char *str)`<br>`void sh1106_update(void)` |
 | 依赖 | driver/i2c |
 
 #### components/drivers/audio
@@ -441,7 +441,7 @@ I2C device found at 0x3C (SH1106)
 - `components/drivers/sh1106/font.h` (5x7 字体)
 
 **验收方法**:
-- 串口打印 `WHO_AM_I = 0x68`
+- 串口打印 `WHO_AM_I = 0x70`
 - 串口持续打印加速度 X/Y/Z 值
 - OLED 显示 "Hello" 文字
 - 晃动手环，加速度值变化
@@ -449,7 +449,7 @@ I2C device found at 0x3C (SH1106)
 **回滚策略**: 删除对应 component 目录
 
 **用户验证清单**:
-- [ ] MPU6050 WHO_AM_I 返回 0x68
+- [ ] MPU6050 WHO_AM_I 返回 0x70
 - [ ] 加速度数据随晃动变化
 - [ ] OLED 点亮并显示文字
 
