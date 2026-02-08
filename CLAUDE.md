@@ -176,3 +176,147 @@ static void timer_callback(TimerHandle_t timer) {
 
 📌 该规则用于防止 FreeRTOS Timer Service 任务栈溢出导致系统重启。
 
+---
+
+## 十、服务层开发规范（Service Layer Rules）
+
+### 9. 事件总线数据发布完整性
+
+**在实现基于事件总线的服务时，必须确保：**
+
+1. 采集数据后，必须通过 `event_publish()` 发布事件通知订阅者
+2. 数据结构中的 `timestamp` 字段必须在每次采样时更新
+3. 仅更新内部数据而不发布事件，会导致订阅者回调永远不被触发
+
+🚫 禁止只更新内部数据缓存而忘记发布事件。
+
+**典型错误案例：**
+```c
+// ❌ 错误：只更新了内部数据，没有发布事件
+static void sensor_task(void *arg) {
+    sample_imu();
+    // 缺少: event_publish(EVT_SENSOR_DATA, &evt_data);
+}
+
+// ✅ 正确：采样后发布事件
+static void sensor_task(void *arg) {
+    sample_imu();
+    s_ctx.latest_data.timestamp = get_timestamp_ms();  // 更新时间戳
+    event_data_t evt_data;
+    memcpy(&evt_data.sensor, &s_ctx.latest_data, sizeof(sensor_data_t));
+    event_publish(EVT_SENSOR_DATA, &evt_data);  // 发布事件
+}
+```
+
+📌 该规则用于确保事件驱动架构的数据流完整性。
+
+---
+
+### 10. 避免在采样任务中执行阻塞操作
+
+**在实现传感器采样任务时，必须注意：**
+
+1. 某些传感器（如 DS18B20）的读取操作需要较长等待时间（750ms）
+2. 在采样任务中直接阻塞会影响其他传感器的采样频率
+3. 应使用**异步状态机模式**将长时间操作拆分为非阻塞步骤
+
+**异步采样状态机模式：**
+
+```c
+// 定义状态
+typedef enum {
+    STATE_IDLE,         // 空闲
+    STATE_CONVERTING,   // 转换中
+    STATE_READY         // 可读取
+} sample_state_t;
+
+// ❌ 错误：阻塞式采样
+esp_err_t read_temp(float *temp) {
+    start_convert();
+    vTaskDelay(pdMS_TO_TICKS(750));  // 阻塞 750ms！
+    return read_result(temp);
+}
+
+// ✅ 正确：异步状态机
+void sample_async(uint32_t now) {
+    switch (state) {
+        case STATE_IDLE:
+            if (time_to_sample(now)) {
+                start_convert();
+                state = STATE_CONVERTING;
+                convert_start_time = now;
+            }
+            break;
+        case STATE_CONVERTING:
+            if ((now - convert_start_time) >= 750) {
+                read_result(&temp);
+                state = STATE_IDLE;
+            }
+            break;
+    }
+}
+```
+
+📌 该规则用于确保多传感器系统中各传感器的采样频率不受影响。
+
+---
+
+## 十一、ESP-IDF 组件结构规范（Component Structure Rules）
+
+### 11. 新建组件目录时必须创建顶层 CMakeLists.txt
+
+**在 `components/` 下新建子目录（如 `services/`、`middleware/` 等）时，必须：**
+
+1. 在该子目录下创建 `CMakeLists.txt` 文件
+2. 使用 `idf_component_register()` 注册所有源文件和头文件路径
+3. 在 `main/CMakeLists.txt` 的 `REQUIRES` 中引用该组件名（目录名）
+
+**ESP-IDF 组件发现机制：**
+- ESP-IDF 会扫描 `components/` 下的每个子目录
+- 如果子目录没有 `CMakeLists.txt`，该目录会被忽略，其中的子组件也不会被发现
+- 错误信息：`Component directory ... does not contain a CMakeLists.txt file`
+
+**典型错误案例：**
+```
+components/
+├── drivers/
+│   ├── CMakeLists.txt      ✅ 存在
+│   ├── mpu6050/
+│   └── ...
+└── services/
+    ├── event_bus/
+    │   └── CMakeLists.txt  ❌ 无法被发现！
+    └── sensor_service/
+        └── CMakeLists.txt  ❌ 无法被发现！
+    （缺少 services/CMakeLists.txt）
+```
+
+**正确结构：**
+```
+components/
+└── services/
+    ├── CMakeLists.txt      ✅ 必须存在！
+    ├── event_bus/
+    │   ├── include/
+    │   └── event_bus.c
+    └── sensor_service/
+        ├── include/
+        └── sensor_service.c
+```
+
+**services/CMakeLists.txt 示例：**
+```cmake
+idf_component_register(
+    SRCS
+        "event_bus/event_bus.c"
+        "sensor_service/sensor_service.c"
+    INCLUDE_DIRS
+        "event_bus/include"
+        "sensor_service/include"
+    REQUIRES freertos driver
+)
+```
+
+🚫 禁止在 `components/` 下创建新目录后不添加顶层 `CMakeLists.txt`。
+
+📌 该规则用于防止 ESP-IDF 组件发现失败导致的编译错误。

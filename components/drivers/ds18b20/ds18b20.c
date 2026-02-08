@@ -53,6 +53,31 @@ esp_err_t ds18b20_start_convert(void)
     return ESP_OK;
 }
 
+esp_err_t ds18b20_read_scratchpad(float *temp_c)
+{
+    if (!initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // 复位并读取暂存器
+    if (!onewire_reset(&ow_bus)) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    onewire_write_byte(&ow_bus, DS18B20_CMD_SKIP_ROM);
+    onewire_write_byte(&ow_bus, DS18B20_CMD_READ_SCRATCH);
+
+    // 读取温度数据 (2字节)
+    uint8_t lsb = onewire_read_byte(&ow_bus);
+    uint8_t msb = onewire_read_byte(&ow_bus);
+
+    // 转换为温度值
+    int16_t raw = (msb << 8) | lsb;
+    *temp_c = raw / 16.0f;
+
+    return ESP_OK;
+}
+
 esp_err_t ds18b20_read_temp(float *temp_c)
 {
     if (!initialized) {

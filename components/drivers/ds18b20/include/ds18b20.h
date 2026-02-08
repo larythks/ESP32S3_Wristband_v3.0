@@ -46,6 +46,13 @@ esp_err_t ds18b20_read_temp(float *temp_c);
 esp_err_t ds18b20_start_convert(void);
 
 /**
+ * @brief 读取暂存器中的温度值（需先调用 ds18b20_start_convert 并等待转换完成）
+ * @param temp_c 输出温度值 (摄氏度)
+ * @return ESP_OK 成功
+ */
+esp_err_t ds18b20_read_scratchpad(float *temp_c);
+
+/**
  * @brief 检查设备是否存在
  * @return true 存在, false 不存在
  */

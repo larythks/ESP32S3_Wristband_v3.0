@@ -10,8 +10,8 @@
 | Week 1 | 迭代 1.2: MPU6050 驱动 + OLED 驱动 | ✅ 已完成 | 2026-02-08 |
 | Week 1 | 迭代 1.3: MAX30102 驱动 + DS18B20 驱动 | ✅ 已完成 | 2026-02-08 |
 | Week 1 | 迭代 1.4: 按键驱动 + 基础 UI 框架 | ✅ 已完成 | 2026-02-08 |
-| Week 2 | 迭代 2.1: 事件总线 + 传感器采样服务 | 🔲 待开始 | - |
-| Week 2 | 迭代 2.2: 健康监测服务 + 计步算法 | 🔲 待开始 | - |
+| Week 2 | 迭代 2.1: 事件总线 + 传感器采样服务 | ✅ 已完成 | 2026-02-08 |
+| Week 2 | 迭代 2.2: 健康监测服务 + 计步算法 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.3: 跌倒检测算法 | 🔲 待开始 | - |
 | Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | 🔲 待开始 | - |
 | Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | 🔲 待开始 | - |
@@ -143,6 +143,137 @@
 - **验收清单**:
   - [ ] 长按 SW2 进入手动测量模式不再崩溃
   - [ ] 系统运行稳定
+
+---
+
+### 2026-02-08 - 迭代 2.1: 事件总线 + 传感器采样服务
+
+- **迭代**: Week 2 - 迭代 2.1
+- **状态**: ✅ 已完成
+- **修改文件**:
+  - components/services/event_bus/include/event_bus.h (事件总线头文件)
+  - components/services/event_bus/event_bus.c (事件总线实现)
+  - components/services/event_bus/CMakeLists.txt
+  - components/services/sensor_service/include/sensor_service.h (传感器服务头文件)
+  - components/services/sensor_service/sensor_service.c (传感器服务实现)
+  - components/services/sensor_service/CMakeLists.txt
+  - main/main.c (集成事件总线和传感器服务)
+  - main/CMakeLists.txt (添加依赖)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 传感器数据定时输出
+  - [ ] 各传感器数据正常
+  - [ ] 越阈后仅对应传感器切换实时检测
+  - [ ] 恢复正常后可自动退出实时检测
+- **备注**:
+  - 事件总线基于 FreeRTOS Queue 实现发布/订阅模式
+  - 传感器服务支持常规采样和实时采样两种模式
+  - 常规采样间隔：体温 30s，心率血氧 120s，IMU 50Hz
+  - 实时采样间隔：1s/次
+
+---
+
+### 2026-02-08 - Bug 修复: 迭代 2.1 代码审查问题
+
+- **迭代**: Bug 修复
+- **状态**: ✅ 已完成
+- **问题描述**: 代码审查发现迭代 2.1 存在 3 个逻辑问题
+- **问题列表**:
+  1. 传感器数据未通过事件总线发布 `EVT_SENSOR_DATA` 事件
+  2. `sensor_data_t.timestamp` 字段未更新
+  3. DS18B20 采样阻塞 750ms 影响 IMU 50Hz 采样
+- **解决方案**:
+  1. 在 sensor_task 中定期发布 EVT_SENSOR_DATA 事件
+  2. 每次采样循环更新 timestamp 字段
+  3. 将 DS18B20 采样改为异步状态机模式（非阻塞）
+- **修改文件**:
+  - components/services/sensor_service/sensor_service.c (异步采样+事件发布)
+  - components/drivers/ds18b20/include/ds18b20.h (添加 ds18b20_read_scratchpad)
+  - components/drivers/ds18b20/ds18b20.c (实现 ds18b20_read_scratchpad)
+  - CLAUDE.md (添加规则 9、10)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 传感器数据事件正常发布（main.c 回调被触发）
+  - [ ] 时间戳正确更新
+  - [ ] IMU 采样频率不受温度采样影响
+
+---
+
+### 2026-02-08 - Bug 修复: 温度采样初始化问题 + 采样间隔调整
+
+- **迭代**: Bug 修复
+- **状态**: ✅ 已完成
+- **问题描述**: 温度数据始终显示 0.0
+- **根本原因**: `sensor_service_start()` 中 `temp_last_sample` 初始化为 0，导致需等待 60 秒后才会触发第一次采样
+- **解决方案**: 将 `temp_last_sample` 初始化为 `当前时间 - 采样间隔`，确保服务启动后立即触发第一次采样
+- **额外修改**: 将温度采样间隔从 60 秒调整为 30 秒
+- **修改文件**:
+  - components/services/sensor_service/sensor_service.c (修复初始化逻辑)
+  - components/services/sensor_service/include/sensor_service.h (采样间隔改为 30s)
+  - PROGRESS.md (更新采样间隔说明)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 服务启动后立即开始温度采样
+  - [ ] 温度数据正常显示（非 0.0）
+  - [ ] 温度采样间隔为 30 秒
+
+---
+
+### 2026-02-08 - 迭代 2.2: 健康监测服务 + 计步算法
+
+- **迭代**: Week 2 - 迭代 2.2
+- **状态**: ✅ 已完成
+- **修改文件**:
+  - components/services/health_monitor/include/health_monitor.h (新建)
+  - components/services/health_monitor/health_monitor.c (新建)
+  - components/services/pedometer/include/pedometer.h (新建)
+  - components/services/pedometer/pedometer.c (新建)
+  - components/services/CMakeLists.txt (添加 health_monitor 和 pedometer)
+  - components/ui_manager/ui_manager.c (使用真实数据)
+  - components/ui_manager/CMakeLists.txt (添加 services 依赖)
+  - main/main.c (初始化健康监测和计步服务)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 手指放上，OLED 显示心率 60-100 bpm
+  - [ ] 血氧显示 95-99%
+  - [ ] 走动时步数增加
+  - [ ] 信号质量低时显示"No Signal"或"--"
+  - [ ] 体温数据正常显示
+- **备注**:
+  - 健康监测服务实现了心率/血氧算法（峰值检测+R值计算）
+  - 计步服务实现了加速度 SVM 峰值检测算法
+  - UI 已集成真实数据显示
+  - 告警事件发布功能已预留（TODO 注释）
+
+---
+
+### 2026-02-08 - Bug 修复: 心率血氧数据流断裂
+
+- **迭代**: Bug 修复
+- **状态**: ✅ 已完成
+- **问题描述**: 代码审查发现心率血氧数据无法正常计算，始终为 0
+- **根本原因**:
+  1. `sensor_data_t` 缺少 PPG 原始数据字段
+  2. `sample_hr_spo2()` 未存储 PPG 数据
+  3. `on_sensor_data()` 未调用 `process_ppg_data()`
+  4. `publish_health_alert()` 事件发布代码被注释
+- **解决方案**:
+  1. 在 `event_bus.h` 添加 `ppg_red`、`ppg_ir` 字段
+  2. 在 `event_bus.h` 添加 `alert_level_t`、`alert_type_t`、`health_alert_t` 定义
+  3. 修改 `sample_hr_spo2()` 存储 PPG 原始数据
+  4. 修改 `on_sensor_data()` 调用 PPG 处理函数
+  5. 启用 `publish_health_alert()` 事件发布
+  6. 移除 `health_monitor.h` 中的重复类型定义
+- **修改文件**:
+  - components/services/event_bus/include/event_bus.h
+  - components/services/sensor_service/sensor_service.c
+  - components/services/health_monitor/health_monitor.c
+  - components/services/health_monitor/include/health_monitor.h
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 编译无错误
+  - [ ] PPG 数据能正确传递到 health_monitor
+  - [ ] 心率/血氧计算结果非零（手指放上时）
 
 ---
 

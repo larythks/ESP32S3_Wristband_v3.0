@@ -5,6 +5,8 @@
 
 #include "ui_manager.h"
 #include "sh1106.h"
+#include "health_monitor.h"
+#include "pedometer.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
@@ -24,29 +26,45 @@ static ui_page_t s_current_page = UI_PAGE_HOME;
 static bool s_manual_measuring = false;
 static ui_page_t s_page_before_measure = UI_PAGE_HOME;
 
-/* 模拟数据（后续由传感器服务提供） */
-static int s_heart_rate = 72;
-static int s_spo2 = 98;
-static uint32_t s_steps = 1234;
-static float s_temperature = 36.5f;
-
 /**
  * @brief 绘制主页
  */
 static void draw_home_page(void)
 {
     char buf[32];
+    health_status_t status = health_get_status();
+    uint32_t steps = pedometer_get_steps();
+
     sh1106_clear();
     sh1106_draw_string(0, 0, "-- Home --", 1);
 
-    snprintf(buf, sizeof(buf), "HR: %d bpm", s_heart_rate);
+    // 心率显示
+    if (status.hr_validity == MEASURE_VALID) {
+        snprintf(buf, sizeof(buf), "HR: %d bpm", status.heart_rate);
+    } else {
+        snprintf(buf, sizeof(buf), "HR: --");
+    }
     sh1106_draw_string(0, 16, buf, 1);
 
-    snprintf(buf, sizeof(buf), "SpO2: %d%%", s_spo2);
+    // 血氧显示
+    if (status.spo2_validity == MEASURE_VALID) {
+        snprintf(buf, sizeof(buf), "SpO2: %d%%", status.spo2);
+    } else {
+        snprintf(buf, sizeof(buf), "SpO2: --");
+    }
     sh1106_draw_string(0, 28, buf, 1);
 
-    snprintf(buf, sizeof(buf), "Temp: %.1fC", s_temperature);
+    // 体温显示
+    if (status.temp_validity == MEASURE_VALID) {
+        snprintf(buf, sizeof(buf), "Temp: %.1fC", status.temperature);
+    } else {
+        snprintf(buf, sizeof(buf), "Temp: --");
+    }
     sh1106_draw_string(0, 40, buf, 1);
+
+    // 步数显示
+    snprintf(buf, sizeof(buf), "Steps: %lu", (unsigned long)steps);
+    sh1106_draw_string(0, 52, buf, 1);
 
     sh1106_update();
 }
@@ -57,12 +75,27 @@ static void draw_home_page(void)
 static void draw_heart_rate_page(void)
 {
     char buf[32];
+    health_status_t status = health_get_status();
+
     sh1106_clear();
     sh1106_draw_string(0, 0, "-- Heart Rate --", 1);
 
-    snprintf(buf, sizeof(buf), "%d", s_heart_rate);
-    sh1106_draw_string(40, 24, buf, 1);
-    sh1106_draw_string(70, 24, "bpm", 1);
+    // 心率显示
+    if (status.hr_validity == MEASURE_VALID) {
+        snprintf(buf, sizeof(buf), "%d", status.heart_rate);
+        sh1106_draw_string(40, 20, buf, 1);
+        sh1106_draw_string(70, 20, "bpm", 1);
+    } else {
+        sh1106_draw_string(30, 20, "No Signal", 1);
+    }
+
+    // 血氧显示
+    if (status.spo2_validity == MEASURE_VALID) {
+        snprintf(buf, sizeof(buf), "SpO2: %d%%", status.spo2);
+    } else {
+        snprintf(buf, sizeof(buf), "SpO2: --");
+    }
+    sh1106_draw_string(0, 40, buf, 1);
 
     sh1106_update();
 }
@@ -73,10 +106,12 @@ static void draw_heart_rate_page(void)
 static void draw_steps_page(void)
 {
     char buf[32];
+    uint32_t steps = pedometer_get_steps();
+
     sh1106_clear();
     sh1106_draw_string(0, 0, "-- Steps --", 1);
 
-    snprintf(buf, sizeof(buf), "%lu", (unsigned long)s_steps);
+    snprintf(buf, sizeof(buf), "%lu", (unsigned long)steps);
     sh1106_draw_string(30, 24, buf, 1);
     sh1106_draw_string(80, 24, "steps", 1);
 
