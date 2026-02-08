@@ -13,8 +13,20 @@
 #include "sensor_service.h"
 #include "health_monitor.h"
 #include "pedometer.h"
+#include "fall_detect.h"
 
 static const char *TAG = "main";
+
+/**
+ * @brief 跌倒检测事件处理回调
+ */
+static void fall_detected_handler(const event_t *event, void *user_data)
+{
+    const health_alert_t *alert = &event->data.health_alert;
+    ESP_LOGW(TAG, "!!! FALL DETECTED !!! Peak SVM: %.1fg, Time: %lu",
+             alert->value / 10.0f, (unsigned long)alert->timestamp);
+    // TODO: 后续迭代中触发报警状态机
+}
 
 /**
  * @brief 传感器数据事件处理回调
@@ -22,6 +34,11 @@ static const char *TAG = "main";
 static void sensor_data_handler(const event_t *event, void *user_data)
 {
     const sensor_data_t *data = &event->data.sensor;
+
+    // 处理跌倒检测（每次 IMU 数据更新时调用）
+    if (data->data_valid & SENSOR_IMU) {
+        fall_detect_process(data->accel_x, data->accel_y, data->accel_z);
+    }
 
     // 每 5 秒打印一次传感器数据
     static uint32_t last_print = 0;
@@ -166,6 +183,21 @@ void app_main(void)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Pedometer start failed!");
     }
+
+    // 初始化跌倒检测服务
+    ret = fall_detect_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Fall detect init failed!");
+    }
+
+    // 启动跌倒检测服务
+    ret = fall_detect_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Fall detect start failed!");
+    }
+
+    // 订阅跌倒检测事件
+    event_subscribe(EVT_FALL_DETECTED, fall_detected_handler, NULL);
 
     ESP_LOGI(TAG, "System initialization complete.");
     ESP_LOGI(TAG, "Press SW2 to switch pages, long press SW2 for manual measure.");

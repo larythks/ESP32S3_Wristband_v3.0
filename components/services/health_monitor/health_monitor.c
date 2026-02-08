@@ -17,6 +17,11 @@ static const char *TAG = "health_monitor";
 #define TEMP_FILTER_SIZE        5       // 体温滑动平均窗口
 #define HR_CALC_INTERVAL_MS     1000    // 心率计算间隔
 
+// 峰值检测参数
+#define PEAK_MIN_INTERVAL_MS    300     // 最小峰值间隔 (对应 200bpm)
+#define PEAK_MAX_INTERVAL_MS    2000    // 最大峰值间隔 (对应 30bpm)
+#define PEAK_DETECTION_THRESHOLD 50     // 峰值检测最小变化量
+
 // ============== 内部数据结构 ==============
 
 /**
@@ -33,6 +38,12 @@ typedef struct {
     uint32_t peak_intervals[8];
     uint8_t interval_index;
     uint8_t interval_count;
+
+    // 峰值检测状态
+    uint32_t prev_ir_value;         // 前一个 IR 值
+    bool rising;                    // 信号上升中
+    uint32_t local_max_value;       // 局部最大值
+    uint32_t local_max_time;        // 局部最大值时间
 
     // AC/DC 分量
     uint32_t red_ac;
@@ -85,6 +96,7 @@ static health_monitor_ctx_t s_ctx = {0};
 
 static void on_sensor_data(const event_t *event, void *user_data);
 static void process_ppg_data(uint32_t red, uint32_t ir, uint32_t timestamp);
+static void detect_peak(uint32_t ir_value, uint32_t timestamp);
 static void process_temp_data(float temp, uint32_t timestamp);
 static void check_alerts(uint32_t timestamp);
 static uint8_t calculate_heart_rate(void);
@@ -236,6 +248,57 @@ static void process_temp_data(float temp, uint32_t timestamp)
 
 // ============== PPG 数据处理 ==============
 
+/**
+ * @brief 峰值检测 - 检测 IR 信号的峰值用于心率计算
+ * @param ir_value 当前 IR 值
+ * @param timestamp 当前时间戳
+ */
+static void detect_peak(uint32_t ir_value, uint32_t timestamp)
+{
+    ppg_context_t *ppg = &s_ctx.ppg;
+
+    // 首次调用初始化
+    if (ppg->prev_ir_value == 0) {
+        ppg->prev_ir_value = ir_value;
+        ppg->rising = true;
+        return;
+    }
+
+    // 判断信号趋势
+    if (ir_value > ppg->prev_ir_value + PEAK_DETECTION_THRESHOLD) {
+        // 信号上升
+        ppg->rising = true;
+        if (ir_value > ppg->local_max_value) {
+            ppg->local_max_value = ir_value;
+            ppg->local_max_time = timestamp;
+        }
+    } else if (ir_value < ppg->prev_ir_value - PEAK_DETECTION_THRESHOLD) {
+        // 信号下降，检查是否刚从上升转为下降（峰值）
+        if (ppg->rising && ppg->local_max_value > 0) {
+            // 检测到峰值
+            uint32_t interval = ppg->local_max_time - ppg->last_peak_time;
+
+            // 验证峰值间隔是否在合理范围内
+            if (ppg->last_peak_time > 0 &&
+                interval >= PEAK_MIN_INTERVAL_MS &&
+                interval <= PEAK_MAX_INTERVAL_MS) {
+                // 记录有效峰值间隔
+                ppg->peak_intervals[ppg->interval_index] = interval;
+                ppg->interval_index = (ppg->interval_index + 1) % 8;
+                if (ppg->interval_count < 8) {
+                    ppg->interval_count++;
+                }
+            }
+
+            ppg->last_peak_time = ppg->local_max_time;
+            ppg->local_max_value = 0;
+        }
+        ppg->rising = false;
+    }
+
+    ppg->prev_ir_value = ir_value;
+}
+
 static void process_ppg_data(uint32_t red, uint32_t ir, uint32_t timestamp)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
@@ -247,6 +310,9 @@ static void process_ppg_data(uint32_t red, uint32_t ir, uint32_t timestamp)
     if (ppg->buffer_count < PPG_BUFFER_SIZE) {
         ppg->buffer_count++;
     }
+
+    // 峰值检测（用于心率计算）
+    detect_peak(ir, timestamp);
 
     // 缓冲区未满时不计算
     if (ppg->buffer_count < PPG_BUFFER_SIZE / 2) {

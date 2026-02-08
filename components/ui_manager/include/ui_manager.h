@@ -15,6 +15,9 @@
 extern "C" {
 #endif
 
+// UI 刷新间隔 (ms)
+#define UI_REFRESH_INTERVAL_MS  120000  // 2 分钟
+
 /**
  * @brief UI 页面枚举
  */

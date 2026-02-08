@@ -5,6 +5,7 @@
 
 #include "sensor_service.h"
 #include "event_bus.h"
+#include "pedometer.h"
 #include "mpu6050.h"
 #include "max30102.h"
 #include "ds18b20.h"
@@ -243,6 +244,8 @@ static void sensor_task(void *arg)
         if ((now - s_ctx.last_event_publish) >= EVENT_PUBLISH_INTERVAL) {
             event_data_t evt_data;
             xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+            // 同步步数到传感器数据
+            s_ctx.latest_data.steps = pedometer_get_steps();
             memcpy(&evt_data.sensor, &s_ctx.latest_data, sizeof(sensor_data_t));
             xSemaphoreGive(s_ctx.mutex);
             event_publish(EVT_SENSOR_DATA, &evt_data);

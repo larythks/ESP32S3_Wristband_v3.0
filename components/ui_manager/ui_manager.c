@@ -8,10 +8,15 @@
 #include "health_monitor.h"
 #include "pedometer.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
 #include <string.h>
 #include <stdio.h>
 
 static const char *TAG = "ui_manager";
+
+/* 定时刷新定时器 */
+static TimerHandle_t s_refresh_timer = NULL;
 
 /* 页面名称 */
 static const char *s_page_names[] = {
@@ -132,6 +137,16 @@ static void draw_manual_measure_page(void)
 }
 
 /**
+ * @brief 定时刷新回调函数
+ */
+static void refresh_timer_callback(TimerHandle_t timer)
+{
+    (void)timer;
+    ESP_LOGD(TAG, "Auto refresh UI");
+    ui_update();
+}
+
+/**
  * @brief 初始化 UI 管理器
  */
 esp_err_t ui_manager_init(void)
@@ -139,8 +154,29 @@ esp_err_t ui_manager_init(void)
     ESP_LOGI(TAG, "Initializing UI manager");
     s_current_page = UI_PAGE_HOME;
     s_manual_measuring = false;
+
+    // 创建定时刷新定时器
+    s_refresh_timer = xTimerCreate(
+        "ui_refresh",
+        pdMS_TO_TICKS(UI_REFRESH_INTERVAL_MS),
+        pdTRUE,     // 自动重载
+        NULL,
+        refresh_timer_callback
+    );
+
+    if (s_refresh_timer == NULL) {
+        ESP_LOGE(TAG, "Failed to create refresh timer");
+        return ESP_ERR_NO_MEM;
+    }
+
+    // 启动定时器
+    if (xTimerStart(s_refresh_timer, 0) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to start refresh timer");
+        return ESP_FAIL;
+    }
+
     ui_update();
-    ESP_LOGI(TAG, "UI manager initialized");
+    ESP_LOGI(TAG, "UI manager initialized (refresh every %d ms)", UI_REFRESH_INTERVAL_MS);
     return ESP_OK;
 }
 

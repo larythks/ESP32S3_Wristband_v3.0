@@ -12,7 +12,7 @@
 | Week 1 | 迭代 1.4: 按键驱动 + 基础 UI 框架 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.1: 事件总线 + 传感器采样服务 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.2: 健康监测服务 + 计步算法 | ✅ 已完成 | 2026-02-08 |
-| Week 2 | 迭代 2.3: 跌倒检测算法 | 🔲 待开始 | - |
+| Week 2 | 迭代 2.3: 跌倒检测算法 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | 🔲 待开始 | - |
 | Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | 🔲 待开始 | - |
@@ -277,3 +277,56 @@
 
 ---
 
+### 2026-02-08 - 迭代 2.3: 跌倒检测算法
+
+- **迭代**: Week 2 - 迭代 2.3
+- **状态**: ✅ 已完成
+- **修改文件**:
+  - components/services/fall_detect/include/fall_detect.h (新建)
+  - components/services/fall_detect/fall_detect.c (新建)
+  - components/services/CMakeLists.txt (添加 fall_detect)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 编译无错误
+  - [ ] 模拟跌倒能检测到（串口打印 "Fall detected"）
+  - [ ] 正常活动无误报
+- **算法说明**:
+  - SVM 计算加速度矢量幅值
+  - 自由落体检测：SVM < 0.4g
+  - 冲击检测：SVM > 2.5g
+  - 静止检测：0.8g < SVM < 1.2g 持续 1 秒
+  - 姿态变化检测：角度变化 > 60°
+- **备注**:
+  - 算法参数可在 fall_detect.h 中调整
+  - 需要在 main.c 中集成调用
+
+---
+
+### 2026-02-08 - Bug 修复: 代码审查发现的 4 个问题
+
+- **迭代**: Bug 修复
+- **状态**: ✅ 已完成
+- **问题列表**:
+  1. 心率计算缺少峰值检测逻辑（严重）
+  2. UI 不会自动刷新
+  3. 步数未同步到 sensor_data_t
+  4. 跌倒检测后状态未自动重置
+- **修改文件**:
+  - components/services/health_monitor/health_monitor.c (添加峰值检测)
+  - components/ui_manager/ui_manager.c (添加定时刷新)
+  - components/ui_manager/include/ui_manager.h (添加刷新间隔宏)
+  - components/services/sensor_service/sensor_service.c (同步步数)
+  - components/services/fall_detect/fall_detect.c (自动重置)
+  - components/services/fall_detect/include/fall_detect.h (冷却时间)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 心率计算结果非零（手指放上时）
+  - [ ] UI 每 2 分钟自动刷新
+  - [ ] sensor_data_t 中步数正确
+  - [ ] 跌倒检测后 30 秒自动重置
+- **备注**:
+  - 心率峰值检测使用 IR 信号趋势变化判定
+  - UI 刷新使用 FreeRTOS 软件定时器
+  - 跌倒检测冷却时间为 30 秒
+
+---
