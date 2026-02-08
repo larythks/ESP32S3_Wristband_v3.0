@@ -76,7 +76,7 @@ esp_err_t mpu6050_read_gyro(int16_t *gx, int16_t *gy, int16_t *gz);
  * @param temp 温度原始值
  * @return ESP_OK 成功
  */
-esp_err_t mpu6050_read_temp_raw(int16_t *temp);
+esp_err_t mpu6050_read_temp(int16_t *temp);
 
 /**
  * @brief 设置加速度量程
