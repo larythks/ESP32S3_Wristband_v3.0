@@ -441,7 +441,7 @@ I2C device found at 0x3C (SH1106)
 - `components/drivers/sh1106/font.h` (5x7 字体)
 
 **验收方法**:
-- 串口打印 `WHO_AM_I = 0x68`
+- 串口打印 `WHO_AM_I = 0x70`
 - 串口持续打印加速度 X/Y/Z 值
 - OLED 显示 "Hello" 文字
 - 晃动手环，加速度值变化
@@ -449,7 +449,7 @@ I2C device found at 0x3C (SH1106)
 **回滚策略**: 删除对应 component 目录
 
 **用户验证清单**:
-- [ ] MPU6050 WHO_AM_I 返回 0x68
+- [ ] MPU6050 WHO_AM_I 返回 0x70
 - [ ] 加速度数据随晃动变化
 - [ ] OLED 点亮并显示文字
 
