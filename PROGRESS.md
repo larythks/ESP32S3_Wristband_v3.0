@@ -330,3 +330,36 @@
   - 跌倒检测冷却时间为 30 秒
 
 ---
+
+### 2026-02-09 - Bug 修复: 心率测量始终显示 0
+
+- **迭代**: Bug 修复（影响迭代 2.2 心率功能）
+- **状态**: ✅ 已完成
+- **问题描述**: 心率测量始终显示为 0，无法正常计算心率
+- **根本原因**:
+  1. `sample_hr_spo2()` 仅每 120 秒调用一次，MAX30102 FIFO 在 0.32 秒内溢出，绝大部分 PPG 数据丢失
+  2. 事件总线每 100ms 发布事件，但 PPG 数据 120 秒才更新一次，health_monitor 收到的全是过期数据
+  3. 峰值检测算法需要连续新鲜数据才能检测到心跳峰值，过期数据无法触发峰值检测
+- **解决方案**:
+  1. 将 PPG 采样改为每个循环周期（20ms）持续读取 FIFO，防止数据溢出
+  2. 在 `sensor_data_t` 中添加 `ppg_fresh` 标志位，标记本周期是否有新 PPG 数据
+  3. 事件发布后清除 `ppg_fresh`，避免 health_monitor 处理过期数据
+  4. health_monitor 的 `on_sensor_data()` 仅在 `ppg_fresh == true` 时处理 PPG 数据
+- **修改文件**:
+  - components/services/event_bus/include/event_bus.h（添加 ppg_fresh 字段）
+  - components/services/sensor_service/sensor_service.c（PPG 持续采样 + ppg_fresh 机制）
+  - components/services/health_monitor/health_monitor.c（仅处理新鲜 PPG 数据）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 编译无错误
+  - [ ] 手指放上后心率显示非零值（60-100 bpm）
+  - [ ] 血氧显示正常（95-99%）
+  - [ ] 温度采样（30s）不受影响
+  - [ ] IMU 采样（50Hz）不受影响
+  - [ ] 计步功能正常
+  - [ ] 跌倒检测功能正常
+- **备注**:
+  - 由三人团队协作完成：项目经理（方案设计+协调）、开发员（代码实现）、测试员（代码审查）
+  - 核心改动：PPG 从 120 秒间隔采样改为每 20ms 持续读取 FIFO
+
+---

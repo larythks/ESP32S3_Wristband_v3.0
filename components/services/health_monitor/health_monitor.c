@@ -190,8 +190,8 @@ static void on_sensor_data(const event_t *event, void *user_data)
         process_temp_data(data->temperature, timestamp);
     }
 
-    // 处理 PPG 数据（心率血氧）
-    if (data->data_valid & SENSOR_HR_SPO2) {
+    // 处理 PPG 数据（心率血氧）- 仅在有新鲜数据时处理
+    if ((data->data_valid & SENSOR_HR_SPO2) && data->ppg_fresh) {
         process_ppg_data(data->ppg_red, data->ppg_ir, timestamp);
     }
 

@@ -46,7 +46,6 @@ typedef struct {
     sampling_mode_t temp_mode;
     sampling_mode_t hr_mode;
     uint32_t temp_last_sample;
-    uint32_t hr_last_sample;
     uint32_t last_event_publish;    // 上次事件发布时间
     // DS18B20 异步采样状态
     temp_sample_state_t temp_state;
@@ -158,9 +157,10 @@ static void sample_temperature_async(uint32_t now, uint32_t interval)
 }
 
 /**
- * @brief 采样心率血氧传感器
+ * @brief 采样心率血氧传感器（持续读取 FIFO）
+ * @return true 如果读取到新的 PPG 数据
  */
-static void sample_hr_spo2(void)
+static bool sample_hr_spo2(void)
 {
     uint32_t red[32], ir[32];
     uint8_t count = 32;
@@ -172,9 +172,12 @@ static void sample_hr_spo2(void)
         // 存储最新的 PPG 原始数据（取最后一个样本）
         s_ctx.latest_data.ppg_red = red[count - 1];
         s_ctx.latest_data.ppg_ir = ir[count - 1];
+        s_ctx.latest_data.ppg_fresh = true;
         s_ctx.latest_data.data_valid |= SENSOR_HR_SPO2;
         xSemaphoreGive(s_ctx.mutex);
+        return true;
     }
+    return false;
 }
 
 /**
@@ -207,30 +210,23 @@ static void sample_imu(void)
 static void sensor_task(void *arg)
 {
     uint32_t now;
-    uint32_t temp_interval, hr_interval;
+    uint32_t temp_interval;
 
     ESP_LOGI(TAG, "Sensor task started");
 
     while (s_ctx.running) {
         now = get_timestamp_ms();
 
-        // 计算当前采样间隔
+        // 计算温度采样间隔
         temp_interval = (s_ctx.temp_mode == SAMPLING_MODE_REALTIME)
                         ? SENSOR_REALTIME_INTERVAL
                         : SENSOR_TEMP_NORMAL_INTERVAL;
 
-        hr_interval = (s_ctx.hr_mode == SAMPLING_MODE_REALTIME)
-                      ? SENSOR_REALTIME_INTERVAL
-                      : SENSOR_HR_NORMAL_INTERVAL;
-
         // 温度异步采样（非阻塞）
         sample_temperature_async(now, temp_interval);
 
-        // 心率血氧采样
-        if ((now - s_ctx.hr_last_sample) >= hr_interval) {
-            sample_hr_spo2();
-            s_ctx.hr_last_sample = now;
-        }
+        // 心率血氧：每个周期都读取 FIFO，防止溢出
+        sample_hr_spo2();
 
         // IMU 持续采样 (50Hz)
         sample_imu();
@@ -247,6 +243,8 @@ static void sensor_task(void *arg)
             // 同步步数到传感器数据
             s_ctx.latest_data.steps = pedometer_get_steps();
             memcpy(&evt_data.sensor, &s_ctx.latest_data, sizeof(sensor_data_t));
+            // 发布后清除 ppg_fresh，避免下次事件误报新数据
+            s_ctx.latest_data.ppg_fresh = false;
             xSemaphoreGive(s_ctx.mutex);
             event_publish(EVT_SENSOR_DATA, &evt_data);
             s_ctx.last_event_publish = now;
@@ -306,10 +304,9 @@ esp_err_t sensor_service_start(void)
     }
 
     s_ctx.running = true;
-    // 初始化为当前时间减去采样间隔，确保立即触发第一次采样
+    // 初始化为当前时间减去采样间隔，确保立即触发第一次温度采样
     uint32_t now = get_timestamp_ms();
     s_ctx.temp_last_sample = now - SENSOR_TEMP_NORMAL_INTERVAL;
-    s_ctx.hr_last_sample = now - SENSOR_HR_NORMAL_INTERVAL;
 
     BaseType_t ret = xTaskCreate(
         sensor_task,

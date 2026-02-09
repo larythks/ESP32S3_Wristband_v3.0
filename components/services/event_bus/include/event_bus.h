@@ -69,6 +69,7 @@ typedef struct {
     uint32_t steps;         // 步数
     uint32_t ppg_red;       // PPG RED 通道原始值
     uint32_t ppg_ir;        // PPG IR 通道原始值
+    bool ppg_fresh;         // PPG 数据是否为本周期新读取
     uint8_t data_valid;     // 数据有效标志位
     uint32_t timestamp;     // 时间戳 (ms)
 } sensor_data_t;
