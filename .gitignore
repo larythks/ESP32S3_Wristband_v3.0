@@ -82,4 +82,4 @@ Desktop.ini
 # If using Claude for code generation, ignore its cache and settings
 .claude/ 
 
-nul
+null

@@ -52,6 +52,10 @@ typedef struct {
     uint32_t temp_convert_start;    // 转换开始时间
     // 温度异常状态
     bool temp_alert_active;         // 温度异常标志（自动触发的实时模式）
+    // 心率测量窗口状态机
+    hr_measure_state_t hr_measure_state;    // 当前测量状态
+    uint32_t hr_measure_start_time;         // 测量开始时间
+    uint32_t hr_last_auto_trigger;          // 上次自动触发时间
     bool running;
     bool initialized;
 } sensor_service_ctx_t;
@@ -225,8 +229,40 @@ static void sensor_task(void *arg)
         // 温度异步采样（非阻塞）
         sample_temperature_async(now, temp_interval);
 
-        // 心率血氧：每个周期都读取 FIFO，防止溢出
-        sample_hr_spo2();
+        // 心率测量窗口状态机
+        switch (s_ctx.hr_measure_state) {
+            case HR_MEASURE_IDLE:
+                // 检查是否到2分钟自动触发时间
+                if ((now - s_ctx.hr_last_auto_trigger) >= SENSOR_HR_AUTO_INTERVAL_MS) {
+                    ESP_LOGI(TAG, "Auto trigger HR measure window");
+                    max30102_wakeup();
+                    s_ctx.hr_measure_state = HR_MEASURE_MEASURING;
+                    s_ctx.hr_measure_start_time = now;
+                    s_ctx.hr_last_auto_trigger = now;
+                }
+                // IDLE 状态不读取 PPG FIFO（节省功耗）
+                break;
+
+            case HR_MEASURE_MEASURING:
+                // 持续读取 FIFO，防止溢出
+                sample_hr_spo2();
+                // 检查15秒窗口是否结束
+                if ((now - s_ctx.hr_measure_start_time) >= SENSOR_HR_MEASURE_WINDOW_MS) {
+                    ESP_LOGI(TAG, "HR measure window complete (15s)");
+                    s_ctx.hr_measure_state = HR_MEASURE_COMPLETE;
+                }
+                break;
+
+            case HR_MEASURE_COMPLETE:
+                // 标记数据就绪，回到空闲
+                xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+                s_ctx.latest_data.ppg_fresh = true;
+                xSemaphoreGive(s_ctx.mutex);
+                max30102_shutdown();
+                s_ctx.hr_measure_state = HR_MEASURE_IDLE;
+                ESP_LOGI(TAG, "HR sensor shutdown, back to IDLE");
+                break;
+        }
 
         // IMU 持续采样 (50Hz)
         sample_imu();
@@ -281,6 +317,9 @@ esp_err_t sensor_service_init(void)
     s_ctx.temp_convert_start = 0;
     s_ctx.temp_alert_active = false;
     s_ctx.last_event_publish = 0;
+    s_ctx.hr_measure_state = HR_MEASURE_IDLE;
+    s_ctx.hr_measure_start_time = 0;
+    s_ctx.hr_last_auto_trigger = 0;
     s_ctx.running = false;
 
     s_ctx.initialized = true;
@@ -307,6 +346,8 @@ esp_err_t sensor_service_start(void)
     // 初始化为当前时间减去采样间隔，确保立即触发第一次温度采样
     uint32_t now = get_timestamp_ms();
     s_ctx.temp_last_sample = now - SENSOR_TEMP_NORMAL_INTERVAL;
+    // 立即触发第一次心率测量
+    s_ctx.hr_last_auto_trigger = now - SENSOR_HR_AUTO_INTERVAL_MS;
 
     BaseType_t ret = xTaskCreate(
         sensor_task,
@@ -397,4 +438,34 @@ sampling_mode_t sensor_get_mode(uint8_t sensor_mask)
         return s_ctx.hr_mode;
     }
     return SAMPLING_MODE_NORMAL;
+}
+
+/**
+ * @brief 手动触发心率测量（进入15秒测量窗口）
+ */
+esp_err_t sensor_start_hr_measure(void)
+{
+    if (!s_ctx.initialized || !s_ctx.running) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_ctx.hr_measure_state == HR_MEASURE_MEASURING) {
+        ESP_LOGW(TAG, "HR measure already in progress");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(TAG, "Manual trigger HR measure window");
+    max30102_wakeup();
+    s_ctx.hr_measure_state = HR_MEASURE_MEASURING;
+    s_ctx.hr_measure_start_time = get_timestamp_ms();
+    s_ctx.hr_last_auto_trigger = s_ctx.hr_measure_start_time;
+    return ESP_OK;
+}
+
+/**
+ * @brief 获取当前心率测量状态
+ */
+hr_measure_state_t sensor_get_hr_measure_state(void)
+{
+    return s_ctx.hr_measure_state;
 }
