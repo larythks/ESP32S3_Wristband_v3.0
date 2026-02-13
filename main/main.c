@@ -77,6 +77,7 @@ static void sw2_callback(button_id_t id, button_event_t event)
         } else {
             ESP_LOGI(TAG, "SW2 long press - Enter manual measure");
             ui_enter_manual_measure();
+            sensor_start_hr_measure();
         }
     }
 }
