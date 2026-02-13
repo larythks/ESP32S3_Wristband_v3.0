@@ -363,3 +363,34 @@
   - 核心改动：PPG 从 120 秒间隔采样改为每 20ms 持续读取 FIFO
 
 ---
+
+### 2026-02-13 - 开发计划同步：心率/血氧15秒测量窗口 + UI刷新频率分离
+
+- **迭代**: 开发计划同步（影响迭代 2.1、2.2 的 sensor_service、health_monitor、ui_manager）
+- **状态**: ✅ 已完成
+- **背景**: development_plan.md 更新了以下需求：
+  1. 体温低阈值从 35.0°C 改为 20.0°C（已在之前完成）
+  2. 心率/血氧每次测量需连续采集15秒原始数据取平均值
+  3. 自动测量每2分钟触发一次
+  4. 步数 OLED 每500ms刷新
+  5. 心率/血氧 OLED 每2分钟刷新（与测量周期对齐）
+- **修改文件**:
+  - components/ui_manager/include/ui_manager.h（新增 UI_STEP_REFRESH_INTERVAL_MS 宏）
+  - components/ui_manager/ui_manager.c（新增500ms步数刷新定时器）
+  - components/services/sensor_service/include/sensor_service.h（新增测量窗口常量、状态枚举、API）
+  - components/services/sensor_service/sensor_service.c（实现15秒测量窗口状态机：IDLE/MEASURING/COMPLETE）
+  - components/services/health_monitor/health_monitor.c（适配窗口机制，窗口内累积数据，窗口结束计算平均值）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 步数 OLED 每500ms刷新
+  - [ ] 心率/血氧每2分钟自动测量（15秒采集后输出平均值）
+  - [ ] 手动触发测量同样走15秒窗口
+  - [ ] IDLE状态下MAX30102 shutdown节省功耗
+  - [ ] 编译无错误
+- **备注**:
+  - 由三人团队协作完成：team-lead（差距分析+方案拆分+协调）、developer（代码实现）、tester（代码审查）
+  - 子任务A（UI刷新分离）测试通过，无阻塞性问题
+  - 子任务B+C（15秒测量窗口）测试通过，9项审查要点全部通过
+  - 测试员提出的非阻塞性优化建议留待后续迭代处理
+
+---

@@ -16,7 +16,8 @@
 static const char *TAG = "ui_manager";
 
 /* 定时刷新定时器 */
-static TimerHandle_t s_refresh_timer = NULL;
+static TimerHandle_t s_refresh_timer = NULL;      // 2分钟：心率/血氧/体温
+static TimerHandle_t s_step_refresh_timer = NULL;  // 500ms：步数
 
 /* 页面名称 */
 static const char *s_page_names[] = {
@@ -137,13 +138,43 @@ static void draw_manual_measure_page(void)
 }
 
 /**
- * @brief 定时刷新回调函数
+ * @brief 定时刷新回调函数（2分钟，心率/血氧/体温整页刷新）
  */
 static void refresh_timer_callback(TimerHandle_t timer)
 {
     (void)timer;
     ESP_LOGD(TAG, "Auto refresh UI");
     ui_update();
+}
+
+/**
+ * @brief 步数定时刷新回调函数（500ms，仅刷新步数区域）
+ */
+static void step_refresh_timer_callback(TimerHandle_t timer)
+{
+    (void)timer;
+
+    /* 仅在主页或步数页时刷新步数显示 */
+    ui_page_t page = s_current_page;
+
+    if (page == UI_PAGE_HOME) {
+        char buf[32];
+        uint32_t steps = pedometer_get_steps();
+        /* 主页步数位于 y=52 行，先用黑色清除该行再绘制 */
+        sh1106_draw_string(0, 52, "                ", 1);
+        snprintf(buf, sizeof(buf), "Steps: %lu", (unsigned long)steps);
+        sh1106_draw_string(0, 52, buf, 1);
+        sh1106_update();
+    } else if (page == UI_PAGE_STEPS) {
+        char buf[32];
+        uint32_t steps = pedometer_get_steps();
+        /* 步数页数字位于 y=24 行 */
+        sh1106_draw_string(30, 24, "                ", 1);
+        snprintf(buf, sizeof(buf), "%lu", (unsigned long)steps);
+        sh1106_draw_string(30, 24, buf, 1);
+        sh1106_draw_string(80, 24, "steps", 1);
+        sh1106_update();
+    }
 }
 
 /**
@@ -175,8 +206,28 @@ esp_err_t ui_manager_init(void)
         return ESP_FAIL;
     }
 
+    // 创建步数刷新定时器（500ms）
+    s_step_refresh_timer = xTimerCreate(
+        "ui_step",
+        pdMS_TO_TICKS(UI_STEP_REFRESH_INTERVAL_MS),
+        pdTRUE,
+        NULL,
+        step_refresh_timer_callback
+    );
+
+    if (s_step_refresh_timer == NULL) {
+        ESP_LOGE(TAG, "Failed to create step refresh timer");
+        return ESP_ERR_NO_MEM;
+    }
+
+    if (xTimerStart(s_step_refresh_timer, 0) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to start step refresh timer");
+        return ESP_FAIL;
+    }
+
     ui_update();
-    ESP_LOGI(TAG, "UI manager initialized (refresh every %d ms)", UI_REFRESH_INTERVAL_MS);
+    ESP_LOGI(TAG, "UI manager initialized (health refresh %d ms, step refresh %d ms)",
+             UI_REFRESH_INTERVAL_MS, UI_STEP_REFRESH_INTERVAL_MS);
     return ESP_OK;
 }
 

@@ -16,7 +16,8 @@ extern "C" {
 #endif
 
 // UI 刷新间隔 (ms)
-#define UI_REFRESH_INTERVAL_MS  120000  // 2 分钟
+#define UI_REFRESH_INTERVAL_MS       120000  // 2 分钟（心率/血氧/体温）
+#define UI_STEP_REFRESH_INTERVAL_MS  500     // 500ms（步数）
 
 /**
  * @brief UI 页面枚举

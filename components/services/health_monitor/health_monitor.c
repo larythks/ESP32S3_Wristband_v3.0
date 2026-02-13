@@ -87,6 +87,10 @@ typedef struct {
     temp_context_t temp;
     alert_context_t alert;
 
+    // 测量窗口跟踪
+    bool measuring_active;          // 当前是否在测量窗口内
+    uint32_t measure_start_time;    // 窗口开始时间
+
     health_status_t status;
 } health_monitor_ctx_t;
 
@@ -190,9 +194,53 @@ static void on_sensor_data(const event_t *event, void *user_data)
         process_temp_data(data->temperature, timestamp);
     }
 
-    // 处理 PPG 数据（心率血氧）- 仅在有新鲜数据时处理
-    if ((data->data_valid & SENSOR_HR_SPO2) && data->ppg_fresh) {
-        process_ppg_data(data->ppg_red, data->ppg_ir, timestamp);
+    // 查询 sensor_service 的心率测量状态
+    hr_measure_state_t hr_state = sensor_get_hr_measure_state();
+
+    if (hr_state == HR_MEASURE_MEASURING) {
+        // 测量窗口激活
+        if (!s_ctx.measuring_active) {
+            // 窗口刚开始，重置PPG缓冲区和峰值检测
+            ESP_LOGI(TAG, "HR measure window started, resetting PPG context");
+            memset(&s_ctx.ppg, 0, sizeof(ppg_context_t));
+            s_ctx.measuring_active = true;
+            s_ctx.measure_start_time = timestamp;
+        }
+
+        // 窗口内：处理 PPG 数据
+        if ((data->data_valid & SENSOR_HR_SPO2) && data->ppg_fresh) {
+            process_ppg_data(data->ppg_red, data->ppg_ir, timestamp);
+        }
+    } else {
+        // 不在测量中
+        if (s_ctx.measuring_active) {
+            // 窗口刚结束，执行最终计算
+            ESP_LOGI(TAG, "HR measure window ended, finalizing results");
+            s_ctx.measuring_active = false;
+
+            // 最终计算心率和血氧
+            uint8_t hr = calculate_heart_rate();
+            uint8_t spo2 = calculate_spo2();
+
+            if (hr > 0) {
+                s_ctx.status.heart_rate = hr;
+                s_ctx.status.hr_validity = MEASURE_VALID;
+                ESP_LOGI(TAG, "Window HR result: %d bpm", hr);
+            } else {
+                s_ctx.status.hr_validity = MEASURE_INVALID_NO_SIGNAL;
+                ESP_LOGW(TAG, "Window HR: no valid result");
+            }
+
+            if (spo2 > 0) {
+                s_ctx.status.spo2 = spo2;
+                s_ctx.status.spo2_validity = MEASURE_VALID;
+                ESP_LOGI(TAG, "Window SpO2 result: %d%%", spo2);
+            } else {
+                s_ctx.status.spo2_validity = MEASURE_INVALID_NO_SIGNAL;
+                ESP_LOGW(TAG, "Window SpO2: no valid result");
+            }
+        }
+        // 窗口外不处理PPG数据，保持上次测量结果
     }
 
     // 更新状态时间戳
@@ -314,54 +362,29 @@ static void process_ppg_data(uint32_t red, uint32_t ir, uint32_t timestamp)
     // 峰值检测（用于心率计算）
     detect_peak(ir, timestamp);
 
-    // 缓冲区未满时不计算
-    if (ppg->buffer_count < PPG_BUFFER_SIZE / 2) {
-        s_ctx.status.hr_validity = MEASURE_INVALID_NO_SIGNAL;
-        s_ctx.status.spo2_validity = MEASURE_INVALID_NO_SIGNAL;
-        return;
-    }
+    // 计算 AC/DC 分量（持续更新，供窗口结束时使用）
+    if (ppg->buffer_count >= PPG_BUFFER_SIZE / 2) {
+        uint32_t red_min = UINT32_MAX, red_max = 0;
+        uint32_t ir_min = UINT32_MAX, ir_max = 0;
+        uint64_t red_sum = 0, ir_sum = 0;
 
-    // 计算 AC/DC 分量
-    uint32_t red_min = UINT32_MAX, red_max = 0;
-    uint32_t ir_min = UINT32_MAX, ir_max = 0;
-    uint64_t red_sum = 0, ir_sum = 0;
+        for (int i = 0; i < ppg->buffer_count; i++) {
+            uint32_t r = ppg->red_buffer[i];
+            uint32_t ir_val = ppg->ir_buffer[i];
 
-    for (int i = 0; i < ppg->buffer_count; i++) {
-        uint32_t r = ppg->red_buffer[i];
-        uint32_t ir_val = ppg->ir_buffer[i];
+            if (r < red_min) red_min = r;
+            if (r > red_max) red_max = r;
+            if (ir_val < ir_min) ir_min = ir_val;
+            if (ir_val > ir_max) ir_max = ir_val;
 
-        if (r < red_min) red_min = r;
-        if (r > red_max) red_max = r;
-        if (ir_val < ir_min) ir_min = ir_val;
-        if (ir_val > ir_max) ir_max = ir_val;
+            red_sum += r;
+            ir_sum += ir_val;
+        }
 
-        red_sum += r;
-        ir_sum += ir_val;
-    }
-
-    ppg->red_ac = red_max - red_min;
-    ppg->ir_ac = ir_max - ir_min;
-    ppg->red_dc = (uint32_t)(red_sum / ppg->buffer_count);
-    ppg->ir_dc = (uint32_t)(ir_sum / ppg->buffer_count);
-
-    // 信号质量检查
-    if (ppg->red_ac < PPG_MIN_AMPLITUDE || ppg->ir_ac < PPG_MIN_AMPLITUDE) {
-        s_ctx.status.hr_validity = MEASURE_INVALID_NO_SIGNAL;
-        s_ctx.status.spo2_validity = MEASURE_INVALID_NO_SIGNAL;
-        s_ctx.status.heart_rate = 0;
-        s_ctx.status.spo2 = 0;
-        return;
-    }
-
-    // 计算心率和血氧
-    s_ctx.status.heart_rate = calculate_heart_rate();
-    s_ctx.status.spo2 = calculate_spo2();
-
-    if (s_ctx.status.heart_rate > 0) {
-        s_ctx.status.hr_validity = MEASURE_VALID;
-    }
-    if (s_ctx.status.spo2 > 0) {
-        s_ctx.status.spo2_validity = MEASURE_VALID;
+        ppg->red_ac = red_max - red_min;
+        ppg->ir_ac = ir_max - ir_min;
+        ppg->red_dc = (uint32_t)(red_sum / ppg->buffer_count);
+        ppg->ir_dc = (uint32_t)(ir_sum / ppg->buffer_count);
     }
 }
 
