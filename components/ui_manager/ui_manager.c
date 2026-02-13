@@ -7,7 +7,9 @@
 #include "sh1106.h"
 #include "health_monitor.h"
 #include "pedometer.h"
+#include "sensor_service.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include <string.h>
@@ -31,6 +33,16 @@ static const char *s_page_names[] = {
 static ui_page_t s_current_page = UI_PAGE_HOME;
 static bool s_manual_measuring = false;
 static ui_page_t s_page_before_measure = UI_PAGE_HOME;
+
+/* 手动测量阶段 */
+typedef enum {
+    MANUAL_PHASE_COUNTDOWN = 0,  // 倒计时中（15秒）
+    MANUAL_PHASE_RESULT          // 显示结果（5秒）
+} manual_measure_phase_t;
+
+static manual_measure_phase_t s_manual_phase = MANUAL_PHASE_COUNTDOWN;
+static int64_t s_manual_start_us = 0;      // 测量起始时间 (us)
+static int64_t s_result_start_us = 0;      // 结果展示起始时间 (us)
 
 /**
  * @brief 绘制主页
@@ -129,11 +141,47 @@ static void draw_steps_page(void)
  */
 static void draw_manual_measure_page(void)
 {
+    char buf[32];
     sh1106_clear();
-    sh1106_draw_string(0, 0, "-- Manual Measure --", 1);
-    sh1106_draw_string(0, 20, "Measuring...", 1);
-    sh1106_draw_string(0, 36, "Long press SW2", 1);
-    sh1106_draw_string(0, 48, "to cancel", 1);
+
+    if (s_manual_phase == MANUAL_PHASE_COUNTDOWN) {
+        int64_t elapsed_us = esp_timer_get_time() - s_manual_start_us;
+        int remaining_s = (SENSOR_HR_MEASURE_WINDOW_MS - (int)(elapsed_us / 1000)) / 1000;
+        if (remaining_s < 0) remaining_s = 0;
+
+        sh1106_draw_string(0, 0, "-- Measuring --", 1);
+        snprintf(buf, sizeof(buf), "Time left: %ds", remaining_s);
+        sh1106_draw_string(0, 20, buf, 1);
+        sh1106_draw_string(0, 40, "Long press SW2", 1);
+        sh1106_draw_string(0, 52, "to cancel", 1);
+    } else {
+        /* MANUAL_PHASE_RESULT */
+        health_status_t status = health_get_status();
+
+        sh1106_draw_string(0, 0, "-- Result --", 1);
+
+        if (status.hr_validity == MEASURE_VALID) {
+            snprintf(buf, sizeof(buf), "HR: %d bpm", status.heart_rate);
+        } else {
+            snprintf(buf, sizeof(buf), "HR: --");
+        }
+        sh1106_draw_string(0, 16, buf, 1);
+
+        if (status.spo2_validity == MEASURE_VALID) {
+            snprintf(buf, sizeof(buf), "SpO2: %d%%", status.spo2);
+        } else {
+            snprintf(buf, sizeof(buf), "SpO2: --");
+        }
+        sh1106_draw_string(0, 32, buf, 1);
+
+        if (status.temp_validity == MEASURE_VALID) {
+            snprintf(buf, sizeof(buf), "Temp: %.1fC", status.temperature);
+        } else {
+            snprintf(buf, sizeof(buf), "Temp: --");
+        }
+        sh1106_draw_string(0, 48, buf, 1);
+    }
+
     sh1106_update();
 }
 
@@ -154,7 +202,6 @@ static void step_refresh_timer_callback(TimerHandle_t timer)
 {
     (void)timer;
 
-    /* 仅在主页或步数页时刷新步数显示 */
     ui_page_t page = s_current_page;
 
     if (page == UI_PAGE_HOME) {
@@ -174,6 +221,28 @@ static void step_refresh_timer_callback(TimerHandle_t timer)
         sh1106_draw_string(30, 24, buf, 1);
         sh1106_draw_string(80, 24, "steps", 1);
         sh1106_update();
+    } else if (page == UI_PAGE_MANUAL_MEASURE && s_manual_measuring) {
+        int64_t now_us = esp_timer_get_time();
+
+        if (s_manual_phase == MANUAL_PHASE_COUNTDOWN) {
+            int64_t elapsed_ms = (now_us - s_manual_start_us) / 1000;
+            if (elapsed_ms >= SENSOR_HR_MEASURE_WINDOW_MS) {
+                /* 倒计时结束，切换到结果展示阶段 */
+                s_manual_phase = MANUAL_PHASE_RESULT;
+                s_result_start_us = now_us;
+                ESP_LOGI("ui_manager", "Manual measure done, showing result");
+            }
+            /* 刷新页面（倒计时或刚切换到结果） */
+            draw_manual_measure_page();
+        } else {
+            /* MANUAL_PHASE_RESULT */
+            int64_t result_elapsed_ms = (now_us - s_result_start_us) / 1000;
+            if (result_elapsed_ms >= UI_MANUAL_RESULT_DISPLAY_MS) {
+                /* 结果展示 5 秒结束，自动退出 */
+                ESP_LOGI("ui_manager", "Result display timeout, auto exit");
+                ui_exit_manual_measure();
+            }
+        }
     }
 }
 
@@ -272,6 +341,8 @@ void ui_enter_manual_measure(void)
         s_page_before_measure = s_current_page;
         s_manual_measuring = true;
         s_current_page = UI_PAGE_MANUAL_MEASURE;
+        s_manual_phase = MANUAL_PHASE_COUNTDOWN;
+        s_manual_start_us = esp_timer_get_time();
         ESP_LOGI(TAG, "Enter manual measure mode");
         ui_update();
     }
