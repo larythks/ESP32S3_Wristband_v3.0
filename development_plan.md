@@ -407,7 +407,7 @@ Week 4: Flutter App + 云端 + 联调
 **验收方法**:
 ```
 串口日志应显示:
-I2C device found at 0x68 (MPU6050)
+I2C device found at 0x69 (MPU6050)
 I2C device found at 0x57 (MAX30102)
 I2C device found at 0x3C (SH1106)
 ```
@@ -418,7 +418,7 @@ I2C device found at 0x3C (SH1106)
 - [ ] 编译无错误
 - [ ] 烧录成功
 - [ ] 串口看到 3 个 I2C 设备地址
-- [ ] 地址与预期一致 (0x68, 0x57, 0x3C)
+- [ ] 地址与预期一致 (0x69, 0x57, 0x3C)
 
 ---
 
@@ -1051,7 +1051,7 @@ mobile_flutter/
 ### 8.2 硬件检查点
 - ESP32-S3 开发板正常工作
 - 所有传感器已焊接/连接
-- I2C 设备地址确认（0x68, 0x57, 0x3C）
+- I2C 设备地址确认（0x69, 0x57, 0x3C）
 - 按键和 LED 连接正确
 
 ### 8.3 sdkconfig 关键配置确认

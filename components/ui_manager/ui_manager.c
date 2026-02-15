@@ -100,12 +100,11 @@ static void draw_heart_rate_page(void)
 
     // 心率显示
     if (status.hr_validity == MEASURE_VALID) {
-        snprintf(buf, sizeof(buf), "%d", status.heart_rate);
-        sh1106_draw_string(40, 20, buf, 1);
-        sh1106_draw_string(70, 20, "bpm", 1);
+        snprintf(buf, sizeof(buf), "HR: %d bpm", status.heart_rate);
     } else {
-        sh1106_draw_string(30, 20, "No Signal", 1);
+        snprintf(buf, sizeof(buf), "HR: --");
     }
+    sh1106_draw_string(0, 20, buf, 1);
 
     // 血氧显示
     if (status.spo2_validity == MEASURE_VALID) {

@@ -61,7 +61,7 @@ void i2c_bus_scan(void)
 
         if (ret == ESP_OK) {
             const char *name = "Unknown";
-            if (addr == 0x68) name = "MPU6050";
+            if (addr == 0x69) name = "MPU6050";
             else if (addr == 0x57) name = "MAX30102";
             else if (addr == 0x3C) name = "SH1106";
 
