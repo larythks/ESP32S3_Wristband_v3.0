@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 // MPU6050 I2C 地址
-#define MPU6050_I2C_ADDR        0x68
+#define MPU6050_I2C_ADDR        0x69
 
 // MPU6050 寄存器地址
 #define MPU6050_REG_WHO_AM_I    0x75

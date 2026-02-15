@@ -20,6 +20,10 @@ extern "C" {
 #define SENSOR_HR_NORMAL_INTERVAL       120000  // 心率血氧: 120秒
 #define SENSOR_IMU_NORMAL_INTERVAL      20      // IMU: 50Hz (20ms)
 
+// 心率测量窗口配置
+#define SENSOR_HR_MEASURE_WINDOW_MS     15000   // 15秒测量窗口
+#define SENSOR_HR_AUTO_INTERVAL_MS      120000  // 2分钟自动触发间隔
+
 // 实时采样间隔 (ms)
 #define SENSOR_REALTIME_INTERVAL        1000    // 实时模式: 1秒
 
@@ -30,6 +34,15 @@ extern "C" {
 // #define SENSOR_TEMP_LOW_NORMAL_THRESHOLD    35.2f   // 低温恢复阈值
 #define SENSOR_TEMP_LOW_ALERT_THRESHOLD     20.0f   // 低温异常阈值
 #define SENSOR_TEMP_LOW_NORMAL_THRESHOLD    20.2f   // 低温恢复阈值
+
+/**
+ * @brief 心率测量窗口状态
+ */
+typedef enum {
+    HR_MEASURE_IDLE = 0,    // 空闲，不采集PPG
+    HR_MEASURE_MEASURING,   // 测量中，持续读取FIFO
+    HR_MEASURE_COMPLETE     // 测量完成
+} hr_measure_state_t;
 
 /**
  * @brief 初始化传感器服务
@@ -70,6 +83,18 @@ esp_err_t sensor_set_mode(uint8_t sensor_mask, sampling_mode_t mode);
  * @return 采样模式
  */
 sampling_mode_t sensor_get_mode(uint8_t sensor_mask);
+
+/**
+ * @brief 手动触发心率测量（进入15秒测量窗口）
+ * @return ESP_OK 成功，ESP_ERR_INVALID_STATE 已在测量中
+ */
+esp_err_t sensor_start_hr_measure(void);
+
+/**
+ * @brief 获取当前心率测量状态
+ * @return 当前测量状态
+ */
+hr_measure_state_t sensor_get_hr_measure_state(void);
 
 #ifdef __cplusplus
 }

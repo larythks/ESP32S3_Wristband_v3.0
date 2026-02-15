@@ -54,21 +54,33 @@
 
 ---
 
-## 三、持续纠错与规则进化机制（Critical）
+## 三、持续记录问题机制（Critical）
 
-### 4. 用户纠正 → 规则固化
+### 4. 记录问题
 
-**每当用户纠正 AI 的一次行为或决策之后：**
+**每当完成一次 bug 修复或代码修改后，AI 必须主动将所修复的问题记录到 `ISSUE.md` 中，无需等待用户提醒。**
 
-- AI 必须将该纠正总结为一条**新的明确规则**
-- 并将其追加写入本 `CLAUDE.md` 文件中
+**触发时机：**
+- 修复了一个 bug（如：功能失效、调用链断裂、逻辑错误）
+- 补充了缺失的功能实现（如：遗漏的函数调用、缺少的 UI 反馈）
+- 解决了一个设计缺陷（如：缺少状态管理、缺少用户交互反馈）
 
-规则应当：
-- 表述清晰
-- 可执行
-- 可防止同类问题再次发生
+**记录格式（每条问题必须包含）：**
+1. **ISSUE 编号**：递增编号（如 ISSUE-001、ISSUE-002）
+2. **发现日期**：YYYY-MM-DD
+3. **原因**：问题产生的根本原因，描述清晰
+4. **后果**：该问题导致的具体影响（功能失效、用户体验缺失等）
+5. **解决方案**：实际采用的修复方式，包含关键代码片段
+6. **涉及文件**：列出所有修改的文件路径
 
-📌 该机制用于让协作规则随着项目推进不断进化。
+**要求：**
+- 表述清晰、可执行
+- 每条问题独立成段，使用 `---` 分隔
+- 如果 `ISSUE.md` 不存在，则先创建该文件
+
+🚫 禁止修复问题后不记录，必须在代码修改完成后主动追加写入。
+
+📌 该机制用于让用户随时了解项目问题与解决方案，同时积累项目知识库。
 
 ---
 
@@ -320,3 +332,50 @@ idf_component_register(
 🚫 禁止在 `components/` 下创建新目录后不添加顶层 `CMakeLists.txt`。
 
 📌 该规则用于防止 ESP-IDF 组件发现失败导致的编译错误。
+
+---
+
+## 十二、构建编译方法（Build Instructions）
+
+### 12. ESP-IDF 编译环境加载与构建命令
+
+**本项目使用 ESP-IDF v5.2.3，目标芯片 ESP32-S3。**
+
+**编译前必须在 PowerShell 中加载 ESP-IDF 环境：**
+
+```powershell
+# 1. 清除 MSYS 环境变量（export.ps1 检测到 MSYS 环境会自动退出）
+Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue
+Remove-Item Env:MINGW_PREFIX -ErrorAction SilentlyContinue
+Remove-Item Env:MSYSTEM_PREFIX -ErrorAction SilentlyContinue
+Remove-Item Env:MSYSTEM_CHOST -ErrorAction SilentlyContinue
+
+# 2. 加载 ESP-IDF 环境
+. 'D:\studying\Espressif\frameworks\esp-idf-v5.2.3\export.ps1'
+
+# 3. 切换到项目目录
+cd 'F:\graduation_project\project\ESP32S3_Wristband_v3.0'
+
+# 4. 构建
+idf.py build
+```
+
+**在 Claude Code 中执行构建的完整命令（单行）：**
+
+```bash
+powershell.exe -NoProfile -Command "Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue; Remove-Item Env:MINGW_PREFIX -ErrorAction SilentlyContinue; Remove-Item Env:MSYSTEM_PREFIX -ErrorAction SilentlyContinue; Remove-Item Env:MSYSTEM_CHOST -ErrorAction SilentlyContinue; . 'D:\studying\Espressif\frameworks\esp-idf-v5.2.3\export.ps1'; cd 'F:\graduation_project\project\ESP32S3_Wristband_v3.0'; idf.py build 2>&1"
+```
+
+**如遇 Python 环境不匹配错误**（提示 `python.exe is currently active in the environment while the project was configured with ...`）：
+
+```bash
+# 先删除 build 目录再重新构建
+powershell.exe -NoProfile -Command "Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue; Remove-Item Env:MINGW_PREFIX -ErrorAction SilentlyContinue; Remove-Item Env:MSYSTEM_PREFIX -ErrorAction SilentlyContinue; Remove-Item Env:MSYSTEM_CHOST -ErrorAction SilentlyContinue; . 'D:\studying\Espressif\frameworks\esp-idf-v5.2.3\export.ps1'; cd 'F:\graduation_project\project\ESP32S3_Wristband_v3.0'; Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue; idf.py build 2>&1"
+```
+
+**注意事项：**
+- `export.ps1` 会自动设置 `IDF_PYTHON_ENV_PATH`，当前环境使用 Python 3.10
+- 如果修改了 `CMakeLists.txt` 或 `sdkconfig`，建议删除 `build` 目录重新构建
+- 构建超时设置建议 600000ms（10 分钟），全量编译约需 3-5 分钟
+- 查看构建结果时可用 `Select-Object -Last 25` 只看最后 25 行
+

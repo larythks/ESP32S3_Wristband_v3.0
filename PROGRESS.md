@@ -12,9 +12,9 @@
 | Week 1 | 迭代 1.4: 按键驱动 + 基础 UI 框架 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.1: 事件总线 + 传感器采样服务 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.2: 健康监测服务 + 计步算法 | ✅ 已完成 | 2026-02-08 |
-| Week 2 | 迭代 2.3: 跌倒检测算法 | 🔲 待开始 | - |
-| Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | 🔲 待开始 | - |
-| Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | 🔲 待开始 | - |
+| Week 2 | 迭代 2.3: 跌倒检测算法 | ✅ 已完成 | 2026-02-08 |
+| Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | ✅ 已完成 | 2026-02-15 |
+| Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | ✅ 已完成（ESP32 固件部分） | 2026-02-15 |
 | Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.2: I2S 音频播放 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | 🔲 待开始 | - |
@@ -277,3 +277,190 @@
 
 ---
 
+### 2026-02-08 - 迭代 2.3: 跌倒检测算法
+
+- **迭代**: Week 2 - 迭代 2.3
+- **状态**: ✅ 已完成
+- **修改文件**:
+  - components/services/fall_detect/include/fall_detect.h (新建)
+  - components/services/fall_detect/fall_detect.c (新建)
+  - components/services/CMakeLists.txt (添加 fall_detect)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 编译无错误
+  - [ ] 模拟跌倒能检测到（串口打印 "Fall detected"）
+  - [ ] 正常活动无误报
+- **算法说明**:
+  - SVM 计算加速度矢量幅值
+  - 自由落体检测：SVM < 0.4g
+  - 冲击检测：SVM > 2.5g
+  - 静止检测：0.8g < SVM < 1.2g 持续 1 秒
+  - 姿态变化检测：角度变化 > 60°
+- **备注**:
+  - 算法参数可在 fall_detect.h 中调整
+  - 需要在 main.c 中集成调用
+
+---
+
+### 2026-02-08 - Bug 修复: 代码审查发现的 4 个问题
+
+- **迭代**: Bug 修复
+- **状态**: ✅ 已完成
+- **问题列表**:
+  1. 心率计算缺少峰值检测逻辑（严重）
+  2. UI 不会自动刷新
+  3. 步数未同步到 sensor_data_t
+  4. 跌倒检测后状态未自动重置
+- **修改文件**:
+  - components/services/health_monitor/health_monitor.c (添加峰值检测)
+  - components/ui_manager/ui_manager.c (添加定时刷新)
+  - components/ui_manager/include/ui_manager.h (添加刷新间隔宏)
+  - components/services/sensor_service/sensor_service.c (同步步数)
+  - components/services/fall_detect/fall_detect.c (自动重置)
+  - components/services/fall_detect/include/fall_detect.h (冷却时间)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 心率计算结果非零（手指放上时）
+  - [ ] UI 每 2 分钟自动刷新
+  - [ ] sensor_data_t 中步数正确
+  - [ ] 跌倒检测后 30 秒自动重置
+- **备注**:
+  - 心率峰值检测使用 IR 信号趋势变化判定
+  - UI 刷新使用 FreeRTOS 软件定时器
+  - 跌倒检测冷却时间为 30 秒
+
+---
+
+### 2026-02-09 - Bug 修复: 心率测量始终显示 0
+
+- **迭代**: Bug 修复（影响迭代 2.2 心率功能）
+- **状态**: ✅ 已完成
+- **问题描述**: 心率测量始终显示为 0，无法正常计算心率
+- **根本原因**:
+  1. `sample_hr_spo2()` 仅每 120 秒调用一次，MAX30102 FIFO 在 0.32 秒内溢出，绝大部分 PPG 数据丢失
+  2. 事件总线每 100ms 发布事件，但 PPG 数据 120 秒才更新一次，health_monitor 收到的全是过期数据
+  3. 峰值检测算法需要连续新鲜数据才能检测到心跳峰值，过期数据无法触发峰值检测
+- **解决方案**:
+  1. 将 PPG 采样改为每个循环周期（20ms）持续读取 FIFO，防止数据溢出
+  2. 在 `sensor_data_t` 中添加 `ppg_fresh` 标志位，标记本周期是否有新 PPG 数据
+  3. 事件发布后清除 `ppg_fresh`，避免 health_monitor 处理过期数据
+  4. health_monitor 的 `on_sensor_data()` 仅在 `ppg_fresh == true` 时处理 PPG 数据
+- **修改文件**:
+  - components/services/event_bus/include/event_bus.h（添加 ppg_fresh 字段）
+  - components/services/sensor_service/sensor_service.c（PPG 持续采样 + ppg_fresh 机制）
+  - components/services/health_monitor/health_monitor.c（仅处理新鲜 PPG 数据）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 编译无错误
+  - [ ] 手指放上后心率显示非零值（60-100 bpm）
+  - [ ] 血氧显示正常（95-99%）
+  - [ ] 温度采样（30s）不受影响
+  - [ ] IMU 采样（50Hz）不受影响
+  - [ ] 计步功能正常
+  - [ ] 跌倒检测功能正常
+- **备注**:
+  - 由三人团队协作完成：项目经理（方案设计+协调）、开发员（代码实现）、测试员（代码审查）
+  - 核心改动：PPG 从 120 秒间隔采样改为每 20ms 持续读取 FIFO
+
+---
+
+### 2026-02-13 - 开发计划同步：心率/血氧15秒测量窗口 + UI刷新频率分离
+
+- **迭代**: 开发计划同步（影响迭代 2.1、2.2 的 sensor_service、health_monitor、ui_manager）
+- **状态**: ✅ 已完成
+- **背景**: development_plan.md 更新了以下需求：
+  1. 体温低阈值从 35.0°C 改为 20.0°C（已在之前完成）
+  2. 心率/血氧每次测量需连续采集15秒原始数据取平均值
+  3. 自动测量每2分钟触发一次
+  4. 步数 OLED 每500ms刷新
+  5. 心率/血氧 OLED 每2分钟刷新（与测量周期对齐）
+- **修改文件**:
+  - components/ui_manager/include/ui_manager.h（新增 UI_STEP_REFRESH_INTERVAL_MS 宏）
+  - components/ui_manager/ui_manager.c（新增500ms步数刷新定时器）
+  - components/services/sensor_service/include/sensor_service.h（新增测量窗口常量、状态枚举、API）
+  - components/services/sensor_service/sensor_service.c（实现15秒测量窗口状态机：IDLE/MEASURING/COMPLETE）
+  - components/services/health_monitor/health_monitor.c（适配窗口机制，窗口内累积数据，窗口结束计算平均值）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 步数 OLED 每500ms刷新
+  - [ ] 心率/血氧每2分钟自动测量（15秒采集后输出平均值）
+  - [ ] 手动触发测量同样走15秒窗口
+  - [ ] IDLE状态下MAX30102 shutdown节省功耗
+  - [ ] 编译无错误
+- **备注**:
+  - 由三人团队协作完成：team-lead（差距分析+方案拆分+协调）、developer（代码实现）、tester（代码审查）
+  - 子任务A（UI刷新分离）测试通过，无阻塞性问题
+  - 子任务B+C（15秒测量窗口）测试通过，9项审查要点全部通过
+  - 测试员提出的非阻塞性优化建议留待后续迭代处理
+
+---
+
+### 2026-02-15 - 迭代 2.4: BLE GATT 服务 + 数据上报
+
+- **迭代**: Week 2 - 迭代 2.4
+- **状态**: ✅ 已完成
+- **新建文件**:
+  - components/ble_gatt/ble_gatt_defs.h (UUID 定义、数据包结构体、命令/报警枚举)
+  - components/ble_gatt/include/ble_service.h (BLE 服务对外 API)
+  - components/ble_gatt/ble_service.c (NimBLE 初始化、GATT 注册、广播、Notify、Telemetry 上报任务)
+  - components/ble_gatt/CMakeLists.txt (组件构建文件)
+- **修改文件**:
+  - main/main.c (集成 ble_service_init 调用)
+  - main/CMakeLists.txt (添加 ble_gatt 依赖)
+  - sdkconfig (确认 NimBLE 配置)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] nRF Connect 能扫描到 "CareBand"
+  - [ ] 连接后能看到服务 UUID 0000FF00-...
+  - [ ] 4 个特征 (FF01 Notify, FF02 Notify, FF03 Write, FF04 Read) 可见
+  - [ ] 订阅 Telemetry (FF01) 后每 2 分钟收到 20 bytes 数据包
+  - [ ] 读取 Status (FF04) 返回 3 bytes 设备状态
+  - [ ] 断连后自动重新广播
+- **备注**:
+  - 由四人团队协作完成：team-lead（方案设计+协调+审查）、developer-1（头文件定义+GATT注册+事件总线集成）、developer-2（核心框架+Telemetry上报+main集成）、tester（代码审查）
+  - GATT 服务定义：1 个 PRIMARY 服务 + 4 个特征 (Telemetry/Alarm/Command/Status)
+  - 广播数据仅包含 Flags + 设备名 (13 bytes)，128-bit UUID 放在 Scan Response 中避免超限
+  - 连接/断连事件通过 event_bus 发布 EVT_BLE_CONN
+  - Telemetry 上报任务独立线程运行，间隔 120 秒，从 sensor_service/health_monitor/pedometer 采集数据
+  - timestamp 目前为系统启动秒数，待迭代 2.5 实现时间同步后改为 Unix 时间戳
+  - Command 特征写入已实现基础接收和日志，完整命令解析留待迭代 2.5
+
+---
+
+### 2026-02-15 - 迭代 2.5: BLE 安全子任务 + 最小端到端切片（ESP32 固件部分）
+
+- **迭代**: Week 2 - 迭代 2.5
+- **状态**: ✅ 已完成（ESP32 固件部分，Flutter 网关因 SDK 未安装而延后）
+- **新建文件**:
+  - components/ble_gatt/include/ble_security.h（BLE 安全模块头文件：SM 初始化、nonce 校验、加密状态查询、GAP 事件处理）
+  - components/ble_gatt/ble_security.c（BLE 安全模块实现：NoInputNoOutput 配对、bonding、SC、nonce 单调递增校验、1 设备限制）
+- **修改文件**:
+  - components/ble_gatt/CMakeLists.txt（添加 ble_security.c）
+  - components/ble_gatt/ble_service.c（集成安全模块、完整命令解析、时间同步、Telemetry 重构）
+  - components/ble_gatt/include/ble_service.h（添加 ble_get_unix_timestamp() 声明）
+  - main/main.c（SW1 手动报警流程：BLE Alarm Notify + 事件总线发布）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 编译通过（✅ 已验证）
+  - [ ] nRF Connect 连接后触发配对请求
+  - [ ] 配对成功后 Command (FF03) 可写入
+  - [ ] 未配对设备写入 FF03 被拒绝
+  - [ ] 重新配对时自动删除旧 bond（1 设备限制）
+  - [ ] 命令 nonce 重放被拒绝（返回 0x08 Insufficient Authorization）
+  - [ ] SYNC_TIME 命令成功后 Telemetry timestamp 为 Unix 时间
+  - [ ] REQUEST_REPORT 命令触发立即上报 Telemetry
+  - [ ] MANUAL_MEASURE 命令启动/停止手动测量
+  - [ ] SW1 短按发送 BLE Alarm Notify（type=MANUAL）
+  - [ ] SW1 报警同时发布 EVT_ALARM_STATE 到事件总线
+- **备注**:
+  - 由四人团队协作完成：team-lead（方案设计+协调+修复）、developer-1（BLE 安全模块+命令解析）、developer-2（SW1 报警流程）、tester（代码审查）
+  - 子任务 A：BLE 安全模块（ble_security.h/c）- Just Works 配对、bonding、nonce 校验
+  - 子任务 B：命令解析+时间同步（ble_service.c）- 4 种命令类型完整实现
+  - 子任务 C：SW1 手动报警流程（main.c）- 组装 Alarm 包 + Notify + 事件总线
+  - 子任务 D：Flutter 最小网关（延后）- Flutter SDK 未安装
+  - 编译时发现 `BLE_ATT_ERR_AUTHORIZATION` 不存在，修正为 `BLE_ATT_ERR_INSUFFICIENT_AUTHOR`（ISSUE-007）
+  - 测试员发现 2 个 Major 级别问题（非阻塞）：
+    1. s_last_nonce 线程安全依赖 NimBLE 单任务模型（MVP 可接受）
+    2. EVT_ALARM_STATE 使用 ALERT_TYPE_NONE 代替缺失的 ALERT_TYPE_MANUAL（后续迭代补充枚举值）
+
+---
