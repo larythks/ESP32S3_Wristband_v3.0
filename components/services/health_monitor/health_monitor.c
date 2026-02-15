@@ -534,7 +534,7 @@ static void check_alerts(uint32_t timestamp)
 
 static void publish_health_alert(alert_type_t type, alert_level_t level, int16_t value, uint32_t timestamp)
 {
-    ESP_LOGW(TAG, "Health alert: type=%d, level=%d, value=%d", type, level, value);
+    // ESP_LOGW(TAG, "Health alert: type=%d, level=%d, value=%d", type, level, value);
 
     // 触发对应传感器进入实时检测模式
     uint8_t sensor_mask = 0;

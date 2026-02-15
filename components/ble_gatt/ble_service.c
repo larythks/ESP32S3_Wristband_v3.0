@@ -352,11 +352,11 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
             s_conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "Connected, handle=%d", s_conn_handle);
 
-            /* 主动发起安全请求（触发配对/加密） */
-            int sec_rc = ble_gap_security_initiate(s_conn_handle);
-            if (sec_rc != 0) {
-                ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
-            }
+            // /* 主动发起安全请求（触发配对/加密） */
+            // int sec_rc = ble_gap_security_initiate(s_conn_handle);
+            // if (sec_rc != 0) {
+            //     ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
+            // }
 
             /* 发布 BLE 连接事件到事件总线 */
             event_data_t evt_data;
