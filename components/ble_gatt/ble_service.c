@@ -21,6 +21,7 @@
 #include "host/ble_uuid.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
+#include "host/ble_store.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
@@ -40,6 +41,7 @@ static const char *TAG = "ble_svc";
 static bool s_initialized = false;
 static bool s_connected   = false;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static uint8_t s_own_addr_type = BLE_OWN_ADDR_PUBLIC;
 
 /* GATT 特征值句柄 (注册时由 NimBLE 填入) */
 static uint16_t s_telemetry_val_handle = 0;
@@ -324,7 +326,7 @@ static int ble_start_advertise(void)
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
-    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
+    rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER,
                            &adv_params, ble_gap_event_handler, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to start advertising, rc=%d", rc);
@@ -425,12 +427,32 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
  */
 static void ble_on_sync(void)
 {
+    int rc;
+    uint8_t addr_val[6] = {0};
+
     ESP_LOGI(TAG, "NimBLE host synced");
 
     /* 使用默认公共地址 */
-    int rc = ble_hs_id_infer_auto(0, &(uint8_t){0});
+    rc = ble_hs_util_ensure_addr(0);
     if (rc != 0) {
-        ESP_LOGW(TAG, "Failed to infer address type, rc=%d", rc);
+        ESP_LOGE(TAG, "Failed to ensure BLE address, rc=%d", rc);
+        return;
+    }
+
+    rc = ble_hs_id_infer_auto(0, &s_own_addr_type);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "Failed to infer address type, rc=%d", rc);
+        return;
+    }
+
+    rc = ble_hs_id_copy_addr(s_own_addr_type, addr_val, NULL);
+    if (rc == 0) {
+        ESP_LOGI(TAG, "BLE address: %02X:%02X:%02X:%02X:%02X:%02X (type=%u)",
+                 addr_val[5], addr_val[4], addr_val[3],
+                 addr_val[2], addr_val[1], addr_val[0],
+                 s_own_addr_type);
+    } else {
+        ESP_LOGW(TAG, "Failed to copy BLE address, rc=%d", rc);
     }
 
     ble_start_advertise();
@@ -582,6 +604,7 @@ esp_err_t ble_service_init(void)
     /* 7. 设置 NimBLE host 回调 */
     ble_hs_cfg.sync_cb  = ble_on_sync;
     ble_hs_cfg.reset_cb = ble_on_reset;
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
 
     /* 8. 启动 NimBLE host 任务 */
     nimble_port_freertos_init(ble_host_task);
