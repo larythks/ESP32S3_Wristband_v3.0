@@ -162,8 +162,14 @@ void sh1106_draw_char(int16_t x, int16_t y, char c, uint8_t color)
         for (uint8_t j = 0; j < 7; j++) {
             if (line & (1 << j)) {
                 sh1106_draw_pixel(x + i, y + j, color);
+            } else {
+                sh1106_draw_pixel(x + i, y + j, !color);
             }
         }
+    }
+    // 清除字符间 1 像素间隔，防止残影
+    for (uint8_t j = 0; j < 7; j++) {
+        sh1106_draw_pixel(x + 5, y + j, !color);
     }
 }
 

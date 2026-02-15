@@ -48,3 +48,36 @@ sensor_start_hr_measure();  // 补充：启动 15 秒测量窗口
 复用已有的 `step_refresh_timer_callback()`（500ms 周期），扩展其对 `UI_PAGE_MANUAL_MEASURE` 页面的处理。
 
 **涉及文件**：`components/ui_manager/include/ui_manager.h`、`components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-003：OLED 局部刷新时旧文本残影未清除
+
+**发现日期**：2026-02-15
+
+**原因**：
+`sh1106_draw_char()` 仅在字体位图为 1 的像素位置调用 `sh1106_draw_pixel()` 设置像素，但不处理位图为 0 的像素位置。这导致：
+1. 绘制空格字符（位图全为 0）时不会清除任何像素，`sh1106_draw_string(x, y, "   ", 1)` 的"清行"操作完全无效
+2. 新文本比旧文本短时（如步数从 "1234" 变为 "99"），尾部旧字符像素残留在帧缓冲中
+
+**后果**：
+- 步数每 500ms 局部刷新时，旧数字残影无法被清除，显示出现叠字/鬼影
+- 手动测量倒计时等所有局部刷新场景均受影响
+
+**解决方案**：
+修改 `sh1106_draw_char()` 为"不透明渲染"模式：字体位图为 1 的位置绘制前景色，为 0 的位置绘制背景色（`!color`）。同时清除字符间 1 像素间隔区域，确保整个 6x7 字符区域被完全覆盖。
+
+```c
+// 修改后的关键逻辑
+if (line & (1 << j)) {
+    sh1106_draw_pixel(x + i, y + j, color);
+} else {
+    sh1106_draw_pixel(x + i, y + j, !color);  // 新增：清除背景
+}
+// 新增：清除字符间 1 像素间隔
+for (uint8_t j = 0; j < 7; j++) {
+    sh1106_draw_pixel(x + 5, y + j, !color);
+}
+```
+
+**涉及文件**：`components/drivers/sh1106/sh1106.c`
