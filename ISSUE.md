@@ -114,3 +114,65 @@ typedef enum {
 ```
 
 **涉及文件**：`components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-005：BLE 广播数据包含 128-bit UUID 存在超限风险
+
+**发现日期**：2026-02-15
+
+**原因**：
+`ble_service.c` 的 `ble_start_advertise()` 中，将 128-bit 服务 UUID 放在广播数据 (Advertising Data) 中。BLE 广播数据上限为 31 bytes，各字段占用：
+- Flags: 3 bytes
+- Complete Local Name "CareBand": 10 bytes (2 header + 8 name)
+- 128-bit UUID: 18 bytes (2 header + 16 UUID)
+- 合计: 31 bytes
+
+恰好达到上限，未来若增加任何广播字段（如 TX Power Level、Manufacturer Data），将导致 `ble_gap_adv_set_fields()` 返回 `BLE_HS_EMSGSIZE` 错误，广播无法启动。
+
+**后果**：
+- 当前可正常工作，但无扩展空间
+- 未来增加广播数据字段时会导致广播失败，设备不可被扫描发现
+
+**解决方案**：
+将 128-bit UUID 从广播数据移到 Scan Response 数据中。Scan Response 同样有 31 bytes 上限，但独立于广播数据，互不影响。
+
+广播数据仅保留 Flags + 设备名 (13 bytes)，使用 `ble_gap_adv_rsp_set_fields()` 设置 Scan Response 包含 UUID：
+
+```c
+/* 广播数据: 仅 Flags + Name */
+memset(&fields, 0, sizeof(fields));
+fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+fields.name = (uint8_t *)name;
+fields.name_len = strlen(name);
+fields.name_is_complete = 1;
+ble_gap_adv_set_fields(&fields);
+
+/* Scan Response: 服务 UUID */
+memset(&rsp_fields, 0, sizeof(rsp_fields));
+rsp_fields.uuids128 = &s_svc_uuid;
+rsp_fields.num_uuids128 = 1;
+rsp_fields.uuids128_is_complete = 1;
+ble_gap_adv_rsp_set_fields(&rsp_fields);
+```
+
+**涉及文件**：`components/ble_gatt/ble_service.c`
+
+---
+
+## ISSUE-006：Telemetry timestamp 字段为系统启动时间而非 Unix 时间戳
+
+**发现日期**：2026-02-15
+
+**原因**：
+Telemetry 数据包中的 `timestamp` 字段来自 `sensor_data_t.timestamp`，该值由 `esp_timer_get_time() / 1000` 产生，代表系统启动以来的毫秒数。除以 1000 后填入数据包的是"系统运行秒数"，而非 development_plan.md 中规定的 Unix 秒时间戳。ESP32 开机时没有 RTC 时钟同步，无法直接生成 Unix 时间。
+
+**后果**：
+- 手机端/云端收到的 timestamp 无法直接转为日期时间
+- 数据记录无法按真实时间排序
+- MVP 阶段可接受（手机端可根据接收时间推算），但正式版本需修复
+
+**解决方案**：
+在 telemetry_task 的 timestamp 赋值处添加 TODO 注释，标记后续需要通过 NTP 或手机端下发时间来校正。当前 MVP 阶段保持使用系统启动时间。
+
+**涉及文件**：`components/ble_gatt/ble_service.c`

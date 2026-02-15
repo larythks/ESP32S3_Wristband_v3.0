@@ -14,6 +14,7 @@
 #include "health_monitor.h"
 #include "pedometer.h"
 #include "fall_detect.h"
+#include "ble_service.h"
 
 static const char *TAG = "main";
 
@@ -79,6 +80,19 @@ static void sw2_callback(button_id_t id, button_event_t event)
             ui_enter_manual_measure();
             sensor_start_hr_measure();
         }
+    }
+}
+
+/**
+ * @brief BLE 连接状态事件处理回调
+ */
+static void ble_conn_handler(const event_t *event, void *user_data)
+{
+    uint32_t state = event->data.raw[0];
+    if (state == BLE_CONN_STATE_CONNECTED) {
+        ESP_LOGI(TAG, "BLE: Client connected");
+    } else {
+        ESP_LOGI(TAG, "BLE: Client disconnected");
     }
 }
 
@@ -199,6 +213,15 @@ void app_main(void)
 
     // 订阅跌倒检测事件
     event_subscribe(EVT_FALL_DETECTED, fall_detected_handler, NULL);
+
+    // 初始化 BLE 服务（在所有传感器和服务初始化完成后）
+    ret = ble_service_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "BLE service init failed!");
+    }
+
+    // 订阅 BLE 连接状态事件
+    event_subscribe(EVT_BLE_CONN, ble_conn_handler, NULL);
 
     ESP_LOGI(TAG, "System initialization complete.");
     ESP_LOGI(TAG, "Press SW2 to switch pages, long press SW2 for manual measure.");

@@ -13,7 +13,7 @@
 | Week 2 | 迭代 2.1: 事件总线 + 传感器采样服务 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.2: 健康监测服务 + 计步算法 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.3: 跌倒检测算法 | ✅ 已完成 | 2026-02-08 |
-| Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | 🔲 待开始 | - |
+| Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | ✅ 已完成 | 2026-02-15 |
 | Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.2: I2S 音频播放 | 🔲 待开始 | - |
@@ -392,5 +392,37 @@
   - 子任务A（UI刷新分离）测试通过，无阻塞性问题
   - 子任务B+C（15秒测量窗口）测试通过，9项审查要点全部通过
   - 测试员提出的非阻塞性优化建议留待后续迭代处理
+
+---
+
+### 2026-02-15 - 迭代 2.4: BLE GATT 服务 + 数据上报
+
+- **迭代**: Week 2 - 迭代 2.4
+- **状态**: ✅ 已完成
+- **新建文件**:
+  - components/ble_gatt/ble_gatt_defs.h (UUID 定义、数据包结构体、命令/报警枚举)
+  - components/ble_gatt/include/ble_service.h (BLE 服务对外 API)
+  - components/ble_gatt/ble_service.c (NimBLE 初始化、GATT 注册、广播、Notify、Telemetry 上报任务)
+  - components/ble_gatt/CMakeLists.txt (组件构建文件)
+- **修改文件**:
+  - main/main.c (集成 ble_service_init 调用)
+  - main/CMakeLists.txt (添加 ble_gatt 依赖)
+  - sdkconfig (确认 NimBLE 配置)
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] nRF Connect 能扫描到 "CareBand"
+  - [ ] 连接后能看到服务 UUID 0000FF00-...
+  - [ ] 4 个特征 (FF01 Notify, FF02 Notify, FF03 Write, FF04 Read) 可见
+  - [ ] 订阅 Telemetry (FF01) 后每 2 分钟收到 20 bytes 数据包
+  - [ ] 读取 Status (FF04) 返回 3 bytes 设备状态
+  - [ ] 断连后自动重新广播
+- **备注**:
+  - 由四人团队协作完成：team-lead（方案设计+协调+审查）、developer-1（头文件定义+GATT注册+事件总线集成）、developer-2（核心框架+Telemetry上报+main集成）、tester（代码审查）
+  - GATT 服务定义：1 个 PRIMARY 服务 + 4 个特征 (Telemetry/Alarm/Command/Status)
+  - 广播数据仅包含 Flags + 设备名 (13 bytes)，128-bit UUID 放在 Scan Response 中避免超限
+  - 连接/断连事件通过 event_bus 发布 EVT_BLE_CONN
+  - Telemetry 上报任务独立线程运行，间隔 120 秒，从 sensor_service/health_monitor/pedometer 采集数据
+  - timestamp 目前为系统启动秒数，待迭代 2.5 实现时间同步后改为 Unix 时间戳
+  - Command 特征写入已实现基础接收和日志，完整命令解析留待迭代 2.5
 
 ---
