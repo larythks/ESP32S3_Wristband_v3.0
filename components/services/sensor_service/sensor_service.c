@@ -413,8 +413,8 @@ esp_err_t sensor_set_mode(uint8_t sensor_mask, sampling_mode_t mode)
 
     if (sensor_mask & SENSOR_HR_SPO2) {
         s_ctx.hr_mode = mode;
-        ESP_LOGI(TAG, "HR mode: %s",
-                 mode == SAMPLING_MODE_REALTIME ? "REALTIME" : "NORMAL");
+        // ESP_LOGI(TAG, "HR mode: %s",
+        //          mode == SAMPLING_MODE_REALTIME ? "REALTIME" : "NORMAL");
     }
 
     // 发布采样模式变更事件

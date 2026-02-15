@@ -14,7 +14,7 @@
 | Week 2 | 迭代 2.2: 健康监测服务 + 计步算法 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.3: 跌倒检测算法 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | ✅ 已完成 | 2026-02-15 |
-| Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | 🔲 待开始 | - |
+| Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | ✅ 已完成（ESP32 固件部分） | 2026-02-15 |
 | Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.2: I2S 音频播放 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | 🔲 待开始 | - |
@@ -424,5 +424,43 @@
   - Telemetry 上报任务独立线程运行，间隔 120 秒，从 sensor_service/health_monitor/pedometer 采集数据
   - timestamp 目前为系统启动秒数，待迭代 2.5 实现时间同步后改为 Unix 时间戳
   - Command 特征写入已实现基础接收和日志，完整命令解析留待迭代 2.5
+
+---
+
+### 2026-02-15 - 迭代 2.5: BLE 安全子任务 + 最小端到端切片（ESP32 固件部分）
+
+- **迭代**: Week 2 - 迭代 2.5
+- **状态**: ✅ 已完成（ESP32 固件部分，Flutter 网关因 SDK 未安装而延后）
+- **新建文件**:
+  - components/ble_gatt/include/ble_security.h（BLE 安全模块头文件：SM 初始化、nonce 校验、加密状态查询、GAP 事件处理）
+  - components/ble_gatt/ble_security.c（BLE 安全模块实现：NoInputNoOutput 配对、bonding、SC、nonce 单调递增校验、1 设备限制）
+- **修改文件**:
+  - components/ble_gatt/CMakeLists.txt（添加 ble_security.c）
+  - components/ble_gatt/ble_service.c（集成安全模块、完整命令解析、时间同步、Telemetry 重构）
+  - components/ble_gatt/include/ble_service.h（添加 ble_get_unix_timestamp() 声明）
+  - main/main.c（SW1 手动报警流程：BLE Alarm Notify + 事件总线发布）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 编译通过（✅ 已验证）
+  - [ ] nRF Connect 连接后触发配对请求
+  - [ ] 配对成功后 Command (FF03) 可写入
+  - [ ] 未配对设备写入 FF03 被拒绝
+  - [ ] 重新配对时自动删除旧 bond（1 设备限制）
+  - [ ] 命令 nonce 重放被拒绝（返回 0x08 Insufficient Authorization）
+  - [ ] SYNC_TIME 命令成功后 Telemetry timestamp 为 Unix 时间
+  - [ ] REQUEST_REPORT 命令触发立即上报 Telemetry
+  - [ ] MANUAL_MEASURE 命令启动/停止手动测量
+  - [ ] SW1 短按发送 BLE Alarm Notify（type=MANUAL）
+  - [ ] SW1 报警同时发布 EVT_ALARM_STATE 到事件总线
+- **备注**:
+  - 由四人团队协作完成：team-lead（方案设计+协调+修复）、developer-1（BLE 安全模块+命令解析）、developer-2（SW1 报警流程）、tester（代码审查）
+  - 子任务 A：BLE 安全模块（ble_security.h/c）- Just Works 配对、bonding、nonce 校验
+  - 子任务 B：命令解析+时间同步（ble_service.c）- 4 种命令类型完整实现
+  - 子任务 C：SW1 手动报警流程（main.c）- 组装 Alarm 包 + Notify + 事件总线
+  - 子任务 D：Flutter 最小网关（延后）- Flutter SDK 未安装
+  - 编译时发现 `BLE_ATT_ERR_AUTHORIZATION` 不存在，修正为 `BLE_ATT_ERR_INSUFFICIENT_AUTHOR`（ISSUE-007）
+  - 测试员发现 2 个 Major 级别问题（非阻塞）：
+    1. s_last_nonce 线程安全依赖 NimBLE 单任务模型（MVP 可接受）
+    2. EVT_ALARM_STATE 使用 ALERT_TYPE_NONE 代替缺失的 ALERT_TYPE_MANUAL（后续迭代补充枚举值）
 
 ---

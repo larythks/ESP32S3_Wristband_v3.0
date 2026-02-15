@@ -176,3 +176,62 @@ Telemetry 数据包中的 `timestamp` 字段来自 `sensor_data_t.timestamp`，�
 在 telemetry_task 的 timestamp 赋值处添加 TODO 注释，标记后续需要通过 NTP 或手机端下发时间来校正。当前 MVP 阶段保持使用系统启动时间。
 
 **涉及文件**：`components/ble_gatt/ble_service.c`
+
+---
+
+## ISSUE-007：BLE 命令 nonce 校验失败返回不存在的错误码 BLE_ATT_ERR_AUTHORIZATION
+
+**发现日期**：2026-02-15
+
+**原因**：
+`ble_service.c` 的 `gatt_chr_access_command()` 中，当 nonce 校验失败时返回 `BLE_ATT_ERR_AUTHORIZATION`，但 NimBLE 的 `ble_att.h` 中不存在该宏定义。正确的宏名称是 `BLE_ATT_ERR_INSUFFICIENT_AUTHOR`（ATT 错误码 0x08，表示 Insufficient Authorization）。
+
+**后果**：
+- 编译失败，错误信息：`'BLE_ATT_ERR_AUTHORIZATION' undeclared (first use in this function)`
+- 整个项目无法构建
+
+**解决方案**：
+将所有 `BLE_ATT_ERR_AUTHORIZATION` 替换为 `BLE_ATT_ERR_INSUFFICIENT_AUTHOR`：
+
+```c
+// 修改前
+return BLE_ATT_ERR_AUTHORIZATION;
+
+// 修改后
+return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
+```
+
+共 4 处替换（ACK_ALARM、SYNC_TIME、REQUEST_REPORT、MANUAL_MEASURE 命令的 nonce 校验失败分支）。
+
+**涉及文件**：`components/ble_gatt/ble_service.c`
+
+---
+
+## ISSUE-008：BLE 配对始终失败（首次配对无法成功）
+
+**发现日期**：2026-02-15
+
+**原因**：
+`sdkconfig` 中 `CONFIG_BT_NIMBLE_SM_SC_LVL` 被配置为 `1`。在 NimBLE 中该级别对应“无安全级别”，会在配对流程中返回 `BLE_SM_ERR_CMD_NOT_SUPP`，导致手机发起配对时被协议栈拒绝。  
+同时，代码中广播固定使用 `BLE_OWN_ADDR_PUBLIC`，未使用 `ble_hs_id_infer_auto()` 推断出的地址类型；在部分设备组合下会增加连接/安全流程不稳定风险。
+
+**后果**：
+- 手机端始终提示“配对失败”，历史上从未成功建立 bonded 关系
+- `Command(FF03)` 的加密写入链路无法按预期建立，安全功能不可用
+- 后续若 bond 存储达到上限（`MAX_BONDS=1`），重配对稳定性进一步下降
+
+**解决方案**：
+1. 将 `CONFIG_BT_NIMBLE_SM_SC_LVL` 从 `1` 调整为 `2`，允许 NoInputNoOutput（Just Works）场景下完成未认证加密配对。
+2. 广播启动时改为使用 `ble_hs_id_infer_auto()` 推断得到的 `own_addr_type`，并在 `on_sync` 中先调用 `ble_hs_util_ensure_addr(0)` 确保地址可用。
+3. 增加 `ble_hs_cfg.store_status_cb = ble_store_util_status_rr`，在 bond 满额时可自动回收旧记录，避免后续重复配对失败。
+
+```c
+// 关键修复
+CONFIG_BT_NIMBLE_SM_SC_LVL=2
+
+ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+rc = ble_hs_id_infer_auto(0, &s_own_addr_type);
+ble_gap_adv_start(s_own_addr_type, ...);
+```
+
+**涉及文件**：`sdkconfig`、`components/ble_gatt/ble_service.c`

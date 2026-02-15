@@ -15,6 +15,8 @@
 #include "pedometer.h"
 #include "fall_detect.h"
 #include "ble_service.h"
+#include "ble_gatt_defs.h"
+#include "nvs_flash.h"
 
 static const char *TAG = "main";
 
@@ -57,9 +59,40 @@ static void sensor_data_handler(const event_t *event, void *user_data)
 static void sw1_callback(button_id_t id, button_event_t event)
 {
     if (event == BUTTON_EVENT_SHORT_PRESS) {
-        ESP_LOGI(TAG, "SW1 short press - Alarm button");
+        ESP_LOGI(TAG, "SW1 short press - Manual alarm triggered");
+
+        /* 递增事件 ID（掉电重置，MVP 可接受） */
+        static uint32_t alarm_event_id = 0;
+        alarm_event_id++;
+
+        /* 组装 BLE Alarm 数据包 */
+        ble_alarm_t alarm = {0};
+        alarm.event_id  = alarm_event_id;
+        alarm.alarm_type = BLE_ALARM_TYPE_MANUAL;
+        alarm.value     = 0;
+        alarm.battery   = BLE_BATTERY_DEFAULT;
+        alarm.timestamp = ble_get_unix_timestamp();
+
+        /* 发送 BLE Alarm Notify */
+        esp_err_t ret = ble_notify_alarm(&alarm);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Alarm notify sent: id=%lu type=%d",
+                     (unsigned long)alarm.event_id, alarm.alarm_type);
+        } else {
+            ESP_LOGW(TAG, "Alarm notify failed: %s (not connected?)",
+                     esp_err_to_name(ret));
+        }
+
+        /* 发布 EVT_ALARM_STATE 到事件总线 */
+        event_data_t evt_data = {0};
+        evt_data.health_alert.type      = ALERT_TYPE_NONE;
+        evt_data.health_alert.level     = ALERT_LEVEL_ALARM;
+        evt_data.health_alert.value     = 0;
+        evt_data.health_alert.timestamp = alarm.timestamp;
+        event_publish(EVT_ALARM_STATE, &evt_data);
+
     } else if (event == BUTTON_EVENT_LONG_PRESS) {
-        ESP_LOGI(TAG, "SW1 long press - Alarm button");
+        ESP_LOGI(TAG, "SW1 long press - Reserved for cancel alarm");
     }
 }
 
@@ -101,8 +134,20 @@ void app_main(void)
     ESP_LOGI(TAG, "=== ESP32-S3 Wristband v3.0 ===");
     ESP_LOGI(TAG, "Starting system initialization...");
 
+    // 初始化 NVS Flash（BLE bonding 存储依赖）
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS flash erase and re-init");
+        nvs_flash_erase();
+        ret = nvs_flash_init();
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS flash init failed!");
+        return;
+    }
+
     // 初始化 I2C 总线
-    esp_err_t ret = i2c_bus_init();
+    ret = i2c_bus_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "I2C bus init failed!");
         return;
@@ -225,7 +270,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "System initialization complete.");
     ESP_LOGI(TAG, "Press SW2 to switch pages, long press SW2 for manual measure.");
-    ESP_LOGI(TAG, "Press SW1 for alarm (not implemented yet).");
+    ESP_LOGI(TAG, "Press SW1 for manual alarm (BLE Notify).");
 
     // 主循环：保持系统运行，按键和 UI 由各自模块处理
     while (1) {

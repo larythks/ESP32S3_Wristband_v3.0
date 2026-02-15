@@ -70,6 +70,16 @@ esp_err_t ble_notify_alarm(const ble_alarm_t *data);
  */
 bool ble_is_connected(void);
 
+/**
+ * @brief 获取当前 Unix 时间戳 (秒)
+ *
+ * 基于 esp_timer 系统时钟 + 手机同步的时间偏移量。
+ * 在收到 SYNC_TIME 命令之前，返回的是系统启动后的秒数。
+ *
+ * @return Unix 时间戳 (秒)，未同步时返回系统运行秒数
+ */
+uint32_t ble_get_unix_timestamp(void);
+
 #ifdef __cplusplus
 }
 #endif

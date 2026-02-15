@@ -333,3 +333,49 @@ idf_component_register(
 
 📌 该规则用于防止 ESP-IDF 组件发现失败导致的编译错误。
 
+---
+
+## 十二、构建编译方法（Build Instructions）
+
+### 12. ESP-IDF 编译环境加载与构建命令
+
+**本项目使用 ESP-IDF v5.2.3，目标芯片 ESP32-S3。**
+
+**编译前必须在 PowerShell 中加载 ESP-IDF 环境：**
+
+```powershell
+# 1. 清除 MSYS 环境变量（export.ps1 检测到 MSYS 环境会自动退出）
+Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue
+Remove-Item Env:MINGW_PREFIX -ErrorAction SilentlyContinue
+Remove-Item Env:MSYSTEM_PREFIX -ErrorAction SilentlyContinue
+Remove-Item Env:MSYSTEM_CHOST -ErrorAction SilentlyContinue
+
+# 2. 加载 ESP-IDF 环境
+. 'D:\studying\Espressif\frameworks\esp-idf-v5.2.3\export.ps1'
+
+# 3. 切换到项目目录
+cd 'F:\graduation_project\project\ESP32S3_Wristband_v3.0'
+
+# 4. 构建
+idf.py build
+```
+
+**在 Claude Code 中执行构建的完整命令（单行）：**
+
+```bash
+powershell.exe -NoProfile -Command "Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue; Remove-Item Env:MINGW_PREFIX -ErrorAction SilentlyContinue; Remove-Item Env:MSYSTEM_PREFIX -ErrorAction SilentlyContinue; Remove-Item Env:MSYSTEM_CHOST -ErrorAction SilentlyContinue; . 'D:\studying\Espressif\frameworks\esp-idf-v5.2.3\export.ps1'; cd 'F:\graduation_project\project\ESP32S3_Wristband_v3.0'; idf.py build 2>&1"
+```
+
+**如遇 Python 环境不匹配错误**（提示 `python.exe is currently active in the environment while the project was configured with ...`）：
+
+```bash
+# 先删除 build 目录再重新构建
+powershell.exe -NoProfile -Command "Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue; Remove-Item Env:MINGW_PREFIX -ErrorAction SilentlyContinue; Remove-Item Env:MSYSTEM_PREFIX -ErrorAction SilentlyContinue; Remove-Item Env:MSYSTEM_CHOST -ErrorAction SilentlyContinue; . 'D:\studying\Espressif\frameworks\esp-idf-v5.2.3\export.ps1'; cd 'F:\graduation_project\project\ESP32S3_Wristband_v3.0'; Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue; idf.py build 2>&1"
+```
+
+**注意事项：**
+- `export.ps1` 会自动设置 `IDF_PYTHON_ENV_PATH`，当前环境使用 Python 3.10
+- 如果修改了 `CMakeLists.txt` 或 `sdkconfig`，建议删除 `build` 目录重新构建
+- 构建超时设置建议 600000ms（10 分钟），全量编译约需 3-5 分钟
+- 查看构建结果时可用 `Select-Object -Last 25` 只看最后 25 行
+
