@@ -176,3 +176,31 @@ Telemetry 数据包中的 `timestamp` 字段来自 `sensor_data_t.timestamp`，�
 在 telemetry_task 的 timestamp 赋值处添加 TODO 注释，标记后续需要通过 NTP 或手机端下发时间来校正。当前 MVP 阶段保持使用系统启动时间。
 
 **涉及文件**：`components/ble_gatt/ble_service.c`
+
+---
+
+## ISSUE-007：BLE 命令 nonce 校验失败返回不存在的错误码 BLE_ATT_ERR_AUTHORIZATION
+
+**发现日期**：2026-02-15
+
+**原因**：
+`ble_service.c` 的 `gatt_chr_access_command()` 中，当 nonce 校验失败时返回 `BLE_ATT_ERR_AUTHORIZATION`，但 NimBLE 的 `ble_att.h` 中不存在该宏定义。正确的宏名称是 `BLE_ATT_ERR_INSUFFICIENT_AUTHOR`（ATT 错误码 0x08，表示 Insufficient Authorization）。
+
+**后果**：
+- 编译失败，错误信息：`'BLE_ATT_ERR_AUTHORIZATION' undeclared (first use in this function)`
+- 整个项目无法构建
+
+**解决方案**：
+将所有 `BLE_ATT_ERR_AUTHORIZATION` 替换为 `BLE_ATT_ERR_INSUFFICIENT_AUTHOR`：
+
+```c
+// 修改前
+return BLE_ATT_ERR_AUTHORIZATION;
+
+// 修改后
+return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
+```
+
+共 4 处替换（ACK_ALARM、SYNC_TIME、REQUEST_REPORT、MANUAL_MEASURE 命令的 nonce 校验失败分支）。
+
+**涉及文件**：`components/ble_gatt/ble_service.c`

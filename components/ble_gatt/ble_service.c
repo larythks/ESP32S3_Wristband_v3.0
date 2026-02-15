@@ -4,6 +4,7 @@
  */
 
 #include "ble_service.h"
+#include "ble_security.h"
 #include "ble_gatt_defs.h"
 #include "event_bus.h"
 
@@ -13,6 +14,7 @@
 
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_timer.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -28,6 +30,9 @@
 
 #include <string.h>
 
+/* NimBLE store config init (未在公开头文件声明) */
+extern void ble_store_config_init(void);
+
 static const char *TAG = "ble_svc";
 
 /* ============== 内部状态 ============== */
@@ -42,6 +47,9 @@ static uint16_t s_alarm_val_handle     = 0;
 static uint16_t s_command_val_handle   = 0;
 static uint16_t s_status_val_handle    = 0;
 
+/* 时间偏移量 (秒): Unix时间戳 = esp_timer秒 + s_time_offset */
+static int64_t s_time_offset = 0;
+
 /* ============== 前向声明 ============== */
 
 static int ble_gap_event_handler(struct ble_gap_event *event, void *arg);
@@ -50,6 +58,7 @@ static void ble_on_reset(int reason);
 static void ble_host_task(void *param);
 static int ble_start_advertise(void);
 static void telemetry_task(void *param);
+static esp_err_t send_telemetry_now(void);
 
 /* GATT access 回调 */
 static int gatt_chr_access_telemetry(uint16_t conn_handle, uint16_t attr_handle,
@@ -99,12 +108,12 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .val_handle = &s_alarm_val_handle,
                 .flags      = BLE_GATT_CHR_F_NOTIFY,
             },
-            /* Command (FF03): Write */
+            /* Command (FF03): Write (加密连接才允许) */
             {
                 .uuid       = &s_chr_command_uuid.u,
                 .access_cb  = gatt_chr_access_command,
                 .val_handle = &s_command_val_handle,
-                .flags      = BLE_GATT_CHR_F_WRITE,
+                .flags      = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
             },
             /* Status (FF04): Read */
             {
@@ -144,25 +153,104 @@ static int gatt_chr_access_alarm(uint16_t conn_handle, uint16_t attr_handle,
 
 /**
  * Command 特征 access 回调 (Write)
+ * 解析命令类型并分发处理，所有命令均包含 nonce 防重放校验
  */
 static int gatt_chr_access_command(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
-        uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
-        if (om_len < 1) {
-            ESP_LOGW(TAG, "Command: empty payload");
+    if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
+    if (om_len < 1) {
+        ESP_LOGW(TAG, "Command: empty payload");
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+
+    /* 读取完整 payload 到本地 buffer */
+    uint8_t buf[16] = {0};
+    uint16_t copy_len = (om_len > sizeof(buf)) ? sizeof(buf) : om_len;
+    ble_hs_mbuf_to_flat(ctxt->om, buf, copy_len, NULL);
+
+    uint8_t cmd_type = buf[0];
+    ESP_LOGI(TAG, "Command received: type=0x%02X, len=%u", cmd_type, om_len);
+
+    switch (cmd_type) {
+    case BLE_CMD_ACK_ALARM: {
+        if (om_len < sizeof(ble_cmd_ack_alarm_t)) {
+            ESP_LOGW(TAG, "ACK_ALARM: payload too short (%u < %u)",
+                     om_len, (unsigned)sizeof(ble_cmd_ack_alarm_t));
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }
-
-        uint8_t cmd_type = 0;
-        ble_hs_mbuf_to_flat(ctxt->om, &cmd_type, 1, NULL);
-        ESP_LOGI(TAG, "Command received: type=0x%02X, len=%u", cmd_type, om_len);
-
-        /* TODO: 迭代 2.5 中实现命令解析与执行 */
+        const ble_cmd_ack_alarm_t *cmd = (const ble_cmd_ack_alarm_t *)buf;
+        if (!ble_security_validate_nonce(cmd->nonce)) {
+            return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
+        }
+        ESP_LOGI(TAG, "ACK_ALARM: event_id=%lu, nonce=%lu",
+                 (unsigned long)cmd->event_id, (unsigned long)cmd->nonce);
+        /* TODO: 对接 alarm_manager 确认告警 */
         return 0;
     }
-    return BLE_ATT_ERR_UNLIKELY;
+
+    case BLE_CMD_SYNC_TIME: {
+        if (om_len < sizeof(ble_cmd_sync_time_t)) {
+            ESP_LOGW(TAG, "SYNC_TIME: payload too short (%u < %u)",
+                     om_len, (unsigned)sizeof(ble_cmd_sync_time_t));
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        const ble_cmd_sync_time_t *cmd = (const ble_cmd_sync_time_t *)buf;
+        if (!ble_security_validate_nonce(cmd->nonce)) {
+            return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
+        }
+        int64_t local_sec = (int64_t)(esp_timer_get_time() / 1000000);
+        s_time_offset = (int64_t)cmd->timestamp - local_sec;
+        ESP_LOGI(TAG, "SYNC_TIME: unix=%lu, offset=%lld",
+                 (unsigned long)cmd->timestamp, (long long)s_time_offset);
+        return 0;
+    }
+
+    case BLE_CMD_REQUEST_REPORT: {
+        if (om_len < sizeof(ble_cmd_request_report_t)) {
+            ESP_LOGW(TAG, "REQUEST_REPORT: payload too short (%u < %u)",
+                     om_len, (unsigned)sizeof(ble_cmd_request_report_t));
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        const ble_cmd_request_report_t *cmd =
+            (const ble_cmd_request_report_t *)buf;
+        if (!ble_security_validate_nonce(cmd->nonce)) {
+            return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
+        }
+        ESP_LOGI(TAG, "REQUEST_REPORT: triggering immediate telemetry");
+        send_telemetry_now();
+        return 0;
+    }
+
+    case BLE_CMD_MANUAL_MEASURE: {
+        if (om_len < sizeof(ble_cmd_manual_measure_t)) {
+            ESP_LOGW(TAG, "MANUAL_MEASURE: payload too short (%u < %u)",
+                     om_len, (unsigned)sizeof(ble_cmd_manual_measure_t));
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        const ble_cmd_manual_measure_t *cmd =
+            (const ble_cmd_manual_measure_t *)buf;
+        if (!ble_security_validate_nonce(cmd->nonce)) {
+            return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
+        }
+        if (cmd->mode == 1) {
+            ESP_LOGI(TAG, "MANUAL_MEASURE: start, duration=%u s",
+                     cmd->duration_s);
+            sensor_start_hr_measure();
+        } else {
+            ESP_LOGI(TAG, "MANUAL_MEASURE: stop");
+        }
+        return 0;
+    }
+
+    default:
+        ESP_LOGW(TAG, "Unknown command type: 0x%02X", cmd_type);
+        return BLE_ATT_ERR_UNLIKELY;
+    }
 }
 
 /**
@@ -262,6 +350,12 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
             s_conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "Connected, handle=%d", s_conn_handle);
 
+            /* 主动发起安全请求（触发配对/加密） */
+            int sec_rc = ble_gap_security_initiate(s_conn_handle);
+            if (sec_rc != 0) {
+                ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
+            }
+
             /* 发布 BLE 连接事件到事件总线 */
             event_data_t evt_data;
             memset(&evt_data, 0, sizeof(evt_data));
@@ -309,6 +403,12 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
                  event->subscribe.attr_handle,
                  event->subscribe.cur_notify);
         break;
+
+    /* 安全相关事件转发到 ble_security 模块 */
+    case BLE_GAP_EVENT_ENC_CHANGE:
+    case BLE_GAP_EVENT_REPEAT_PAIRING:
+    case BLE_GAP_EVENT_PASSKEY_ACTION:
+        return ble_security_gap_event(event);
 
     default:
         break;
@@ -358,6 +458,61 @@ static void ble_host_task(void *param)
 /* ============== Telemetry 定时上报任务 ============== */
 
 /**
+ * 获取当前 Unix 时间戳 (秒)
+ * 基于 esp_timer + 时间同步偏移量
+ */
+uint32_t ble_get_unix_timestamp(void)
+{
+    int64_t local_sec = (int64_t)(esp_timer_get_time() / 1000000);
+    int64_t unix_sec = local_sec + s_time_offset;
+    return (unix_sec > 0) ? (uint32_t)unix_sec : 0;
+}
+
+/**
+ * 立即采集并发送一次 Telemetry 数据
+ */
+static esp_err_t send_telemetry_now(void)
+{
+    if (!ble_is_connected()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* 采集传感器数据 */
+    sensor_data_t sensor;
+    esp_err_t ret = sensor_get_latest(&sensor);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to get sensor data, ret=%d", ret);
+        return ret;
+    }
+
+    health_status_t health = health_get_status();
+
+    /* 组装 Telemetry 数据包 */
+    ble_telemetry_t pkt;
+    memset(&pkt, 0, sizeof(pkt));
+
+    pkt.temp       = (int16_t)(sensor.temperature * 10);
+    pkt.heart_rate = health.heart_rate;
+    pkt.spo2       = health.spo2;
+    pkt.steps      = pedometer_get_steps();
+    pkt.battery    = BLE_BATTERY_DEFAULT;
+    pkt.data_valid = sensor.data_valid;
+    pkt.timestamp  = ble_get_unix_timestamp();
+
+    /* 发送 Notify */
+    ret = ble_notify_telemetry(&pkt);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu ts=%lu",
+                 pkt.temp, pkt.heart_rate, pkt.spo2,
+                 (unsigned long)pkt.steps, (unsigned long)pkt.timestamp);
+    } else {
+        ESP_LOGD(TAG, "Telemetry notify skipped, ret=%d", ret);
+    }
+
+    return ret;
+}
+
+/**
  * Telemetry 定时上报任务
  * 每 BLE_TELEMETRY_INTERVAL_MS (120秒) 采集传感器数据并通过 Notify 发送
  */
@@ -368,45 +523,7 @@ static void telemetry_task(void *param)
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(BLE_TELEMETRY_INTERVAL_MS));
-
-        /* 未连接时跳过 */
-        if (!ble_is_connected()) {
-            continue;
-        }
-
-        /* 采集传感器数据 */
-        sensor_data_t sensor;
-        esp_err_t ret = sensor_get_latest(&sensor);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to get sensor data, ret=%d", ret);
-            continue;
-        }
-
-        health_status_t health = health_get_status();
-
-        /* 组装 Telemetry 数据包 */
-        ble_telemetry_t pkt;
-        memset(&pkt, 0, sizeof(pkt));
-
-        pkt.temp       = (int16_t)(sensor.temperature * 10);
-        pkt.heart_rate = health.heart_rate;
-        pkt.spo2       = health.spo2;
-        pkt.steps      = pedometer_get_steps();
-        pkt.battery    = BLE_BATTERY_DEFAULT;
-        pkt.data_valid = sensor.data_valid;
-        /* TODO: timestamp 目前是系统启动后的毫秒数除以 1000，并非 Unix 时间戳。
-         * 需要在实现时间同步（NTP 或手机下发）后，改为真正的 Unix 秒。 */
-        pkt.timestamp  = (uint32_t)(sensor.timestamp / 1000);
-
-        /* 发送 Notify */
-        ret = ble_notify_telemetry(&pkt);
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu",
-                     pkt.temp, pkt.heart_rate, pkt.spo2,
-                     (unsigned long)pkt.steps);
-        } else {
-            ESP_LOGD(TAG, "Telemetry notify skipped, ret=%d", ret);
-        }
+        send_telemetry_now();
     }
 }
 
@@ -428,18 +545,21 @@ esp_err_t ble_service_init(void)
         return ESP_FAIL;
     }
 
-    /* 2. 设置设备名 */
+    /* 2. 初始化 BLE Store Config */
+    ble_store_config_init();
+
+    /* 3. 设置设备名 */
     rc = ble_svc_gap_device_name_set(BLE_DEVICE_NAME);
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to set device name, rc=%d", rc);
         return ESP_FAIL;
     }
 
-    /* 3. 初始化 GAP 和 GATT 标准服务 */
+    /* 4. 初始化 GAP 和 GATT 标准服务 */
     ble_svc_gap_init();
     ble_svc_gatt_init();
 
-    /* 4. 注册自定义 GATT 服务 */
+    /* 5. 注册自定义 GATT 服务 */
     rc = ble_gatts_count_cfg(s_gatt_svcs);
     if (rc != 0) {
         ESP_LOGE(TAG, "ble_gatts_count_cfg() failed, rc=%d", rc);
@@ -452,14 +572,21 @@ esp_err_t ble_service_init(void)
         return ESP_FAIL;
     }
 
-    /* 5. 设置 NimBLE host 回调 */
+    /* 6. 配置 BLE 安全参数 */
+    ret = ble_security_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "BLE security init failed");
+        return ESP_FAIL;
+    }
+
+    /* 7. 设置 NimBLE host 回调 */
     ble_hs_cfg.sync_cb  = ble_on_sync;
     ble_hs_cfg.reset_cb = ble_on_reset;
 
-    /* 6. 启动 NimBLE host 任务 */
+    /* 8. 启动 NimBLE host 任务 */
     nimble_port_freertos_init(ble_host_task);
 
-    /* 7. 启动 Telemetry 定时上报任务 */
+    /* 9. 启动 Telemetry 定时上报任务 */
     BaseType_t xret = xTaskCreate(
         telemetry_task,
         "ble_telem",
