@@ -81,3 +81,36 @@ for (uint8_t j = 0; j < 7; j++) {
 ```
 
 **涉及文件**：`components/drivers/sh1106/sh1106.c`
+
+---
+
+## ISSUE-004：手动测量结果页偶现显示上一次测量数据
+
+**发现日期**：2026-02-15
+
+**原因**：
+UI 与 health_monitor 之间存在时序竞争。UI 的 500ms 定时器通过自身壁钟时间判断 15 秒倒计时结束后，立即调用 `health_get_status()` 读取结果。但此时 health_monitor 的计算链路（sensor_task → event_publish → event_dispatch → on_sensor_data → calculate_heart_rate/calculate_spo2）可能尚未完成，存在约 0~100ms 的竞争窗口。若 UI timer 恰好在此窗口内触发，读到的是上一次测量的旧数据。
+
+此外，结果页面仅在阶段切换瞬间绘制一次（RESULT 分支不调用 `draw_manual_measure_page()`），一旦首次读到旧数据，整个 5 秒展示期间都不会更新。
+
+**后果**：
+- 手动测量结束后，约 20% 概率（100ms/500ms）显示上一次而非本次的心率/血氧结果
+- 用户看到错误的测量数据，无法信任测量功能
+
+**解决方案**：
+在 COUNTDOWN 和 RESULT 之间新增 `MANUAL_PHASE_WAIT_RESULT` 过渡阶段：
+
+1. 倒计时到达 15 秒后，切换到 WAIT_RESULT 阶段，OLED 显示 "Calculating..."
+2. 下一个 timer tick（500ms 后）再切换到 RESULT 阶段，此时读取 `health_get_status()` 展示结果
+3. 500ms 的等待远大于 health_monitor 所需的 ~100ms，彻底消除竞争窗口
+
+```c
+// 三阶段状态机
+typedef enum {
+    MANUAL_PHASE_COUNTDOWN = 0,  // 倒计时中（15秒）
+    MANUAL_PHASE_WAIT_RESULT,    // 等待计算完毕（500ms）
+    MANUAL_PHASE_RESULT          // 显示结果（5秒）
+} manual_measure_phase_t;
+```
+
+**涉及文件**：`components/ui_manager/ui_manager.c`

@@ -37,6 +37,7 @@ static ui_page_t s_page_before_measure = UI_PAGE_HOME;
 /* 手动测量阶段 */
 typedef enum {
     MANUAL_PHASE_COUNTDOWN = 0,  // 倒计时中（15秒）
+    MANUAL_PHASE_WAIT_RESULT,    // 等待 health_monitor 计算完毕
     MANUAL_PHASE_RESULT          // 显示结果（5秒）
 } manual_measure_phase_t;
 
@@ -153,6 +154,9 @@ static void draw_manual_measure_page(void)
         sh1106_draw_string(0, 20, buf, 1);
         sh1106_draw_string(0, 40, "Long press SW2", 1);
         sh1106_draw_string(0, 52, "to cancel", 1);
+    } else if (s_manual_phase == MANUAL_PHASE_WAIT_RESULT) {
+        sh1106_draw_string(0, 0, "-- Measuring --", 1);
+        sh1106_draw_string(0, 28, "Calculating...", 1);
     } else {
         /* MANUAL_PHASE_RESULT */
         health_status_t status = health_get_status();
@@ -226,12 +230,16 @@ static void step_refresh_timer_callback(TimerHandle_t timer)
         if (s_manual_phase == MANUAL_PHASE_COUNTDOWN) {
             int64_t elapsed_ms = (now_us - s_manual_start_us) / 1000;
             if (elapsed_ms >= SENSOR_HR_MEASURE_WINDOW_MS) {
-                /* 倒计时结束，切换到结果展示阶段 */
-                s_manual_phase = MANUAL_PHASE_RESULT;
-                s_result_start_us = now_us;
-                ESP_LOGI("ui_manager", "Manual measure done, showing result");
+                /* 倒计时结束，进入等待阶段，等 health_monitor 完成计算 */
+                s_manual_phase = MANUAL_PHASE_WAIT_RESULT;
+                ESP_LOGI("ui_manager", "Manual measure countdown done, waiting for result");
             }
-            /* 刷新页面（倒计时或刚切换到结果） */
+            draw_manual_measure_page();
+        } else if (s_manual_phase == MANUAL_PHASE_WAIT_RESULT) {
+            /* 等待一个 timer 周期（500ms），确保 health_monitor 已完成计算 */
+            s_manual_phase = MANUAL_PHASE_RESULT;
+            s_result_start_us = now_us;
+            ESP_LOGI("ui_manager", "Showing manual measure result");
             draw_manual_measure_page();
         } else {
             /* MANUAL_PHASE_RESULT */
