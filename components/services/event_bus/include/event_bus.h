@@ -7,12 +7,21 @@
 #define EVENT_BUS_H
 
 #include "esp_err.h"
+#include "esp_timer.h"
 #include <stdint.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief 获取系统时间戳 (ms)
+ */
+static inline uint32_t get_timestamp_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
 
 // 最大订阅者数量
 #define EVENT_BUS_MAX_SUBSCRIBERS   8

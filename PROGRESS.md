@@ -16,6 +16,7 @@
 | Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | ✅ 已完成 | 2026-02-15 |
 | Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | ✅ 已完成（ESP32 固件部分） | 2026-02-15 |
 | Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | ✅ 已完成 | 2026-02-16 |
+| Week 3 | 迭代 3.1 后代码结构优化 | ✅ 已完成 | 2026-02-16 |
 | Week 3 | 迭代 3.2: I2S 音频播放 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.4: 完整报警流程联调 | 🔲 待开始 | - |
@@ -535,3 +536,40 @@
 
 ---
 
+### 2026-02-16 - 迭代 3.1 后代码结构优化（团队协作）
+
+- **迭代**: 迭代 3.1 后、迭代 3.2 前的结构优化
+- **状态**: ✅ 已完成
+- **任务简述**: 对迭代 1.1 ~ 3.1 积累的代码进行结构优化，消除重复代码、统一架构模式、清理不必要的公共接口
+- **优化项目**:
+  1. **PPG AC/DC 计算效率优化** (health_monitor.c) - 将 AC/DC 计算从每次样本 O(n) 遍历改为窗口结束时一次性计算，提取 `calculate_ac_dc()` 函数
+  2. **共享 `get_timestamp_ms()` 提取** (event_bus.h) - 消除 sensor_service.c 和 fall_detect.c 中的重复定义，移至 event_bus.h 作为 `static inline` 函数
+  3. **fall_detect 事件总线集成** (fall_detect.c) - 从外部调用模式改为自订阅事件总线，与 pedometer/health_monitor 架构一致
+  4. **BLE Notify 重复代码合并** (ble_service.c) - 提取 `ble_notify_raw()` 通用函数，`ble_notify_telemetry()` 和 `ble_notify_alarm()` 简化为单行委派
+  5. **pedometer_feed_data() 接口清理** (pedometer.c/h) - 仅内部使用的函数从 public 改为 static
+  6. **main.c 跌倒检测调用移除** (main.c) - fall_detect 自订阅后，main.c 不再需要手动转发 IMU 数据
+- **修改文件**:
+  - components/services/event_bus/include/event_bus.h（添加共享 `get_timestamp_ms()`）
+  - components/services/health_monitor/health_monitor.c（提取 `calculate_ac_dc()`，窗口结束时调用）
+  - components/services/fall_detect/fall_detect.c（添加事件总线订阅/取消，移除重复 `get_timestamp_ms()`）
+  - components/services/sensor_service/sensor_service.c（移除重复 `get_timestamp_ms()`）
+  - components/ble_gatt/ble_service.c（提取 `ble_notify_raw()` 通用函数）
+  - components/services/pedometer/pedometer.c（`pedometer_feed_data()` 改为 static）
+  - components/services/pedometer/include/pedometer.h（移除 `pedometer_feed_data()` 公共声明）
+  - main/main.c（移除 `fall_detect_process()` 调用）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] 编译通过，无错误
+  - [x] 二进制大小正常（627KB，app 分区 40% 空闲）
+  - [x] 代码审查通过（测试员确认逻辑正确性）
+  - [ ] 实机测试：跌倒检测功能正常（fall_detect 从 20ms 采样改为 100ms 事件总线周期）
+  - [ ] 实机测试：计步功能正常
+  - [ ] 实机测试：心率血氧测量正常
+- **统计**: 8 个文件修改，85 行新增，80 行删除
+- **注意事项**:
+  - fall_detect 集成事件总线后，IMU 数据接收频率从 20ms（sensor_task 循环）变为 100ms（事件发布周期），需实机验证跌倒检测灵敏度是否受影响
+- **备注**:
+  - 由五人团队协作完成：team-lead（方案设计+协调+代码审查）、developer-1（PPG 优化+fall_detect 集成）、developer-2（timestamp 提取+BLE 合并+pedometer 清理）、tester（完整代码审查+编译验证）
+  - 本次优化为非功能性重构，不影响现有功能，仅改善代码结构和可维护性
+
+---

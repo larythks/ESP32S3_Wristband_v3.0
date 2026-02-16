@@ -629,54 +629,42 @@ esp_err_t ble_service_init(void)
     return ESP_OK;
 }
 
-esp_err_t ble_notify_telemetry(const ble_telemetry_t *data)
+/**
+ * @brief 通用 BLE Notify 发送辅助函数
+ */
+static esp_err_t ble_notify_raw(uint16_t attr_handle,
+                                const void *data, size_t len,
+                                const char *name)
 {
     if (data == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-
     if (!s_connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
         return ESP_ERR_INVALID_STATE;
     }
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, sizeof(ble_telemetry_t));
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
     if (om == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate mbuf for telemetry");
+        ESP_LOGE(TAG, "Failed to allocate mbuf for %s", name);
         return ESP_ERR_NO_MEM;
     }
-
-    int rc = ble_gatts_notify_custom(s_conn_handle, s_telemetry_val_handle, om);
+    int rc = ble_gatts_notify_custom(s_conn_handle, attr_handle, om);
     if (rc != 0) {
-        ESP_LOGW(TAG, "Telemetry notify failed, rc=%d", rc);
+        ESP_LOGW(TAG, "%s notify failed, rc=%d", name, rc);
         return ESP_FAIL;
     }
-
     return ESP_OK;
+}
+
+esp_err_t ble_notify_telemetry(const ble_telemetry_t *data)
+{
+    return ble_notify_raw(s_telemetry_val_handle,
+                          data, sizeof(ble_telemetry_t), "telemetry");
 }
 
 esp_err_t ble_notify_alarm(const ble_alarm_t *data)
 {
-    if (data == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    if (!s_connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, sizeof(ble_alarm_t));
-    if (om == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate mbuf for alarm");
-        return ESP_ERR_NO_MEM;
-    }
-
-    int rc = ble_gatts_notify_custom(s_conn_handle, s_alarm_val_handle, om);
-    if (rc != 0) {
-        ESP_LOGW(TAG, "Alarm notify failed, rc=%d", rc);
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
+    return ble_notify_raw(s_alarm_val_handle,
+                          data, sizeof(ble_alarm_t), "alarm");
 }
 
 bool ble_is_connected(void)

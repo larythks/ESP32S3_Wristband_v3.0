@@ -103,6 +103,7 @@ static void process_ppg_data(uint32_t red, uint32_t ir, uint32_t timestamp);
 static void detect_peak(uint32_t ir_value, uint32_t timestamp);
 static void process_temp_data(float temp, uint32_t timestamp);
 static void check_alerts(uint32_t timestamp);
+static void calculate_ac_dc(void);
 static uint8_t calculate_heart_rate(void);
 static uint8_t calculate_spo2(void);
 static void publish_health_alert(alert_type_t type, alert_level_t level, int16_t value, uint32_t timestamp);
@@ -217,6 +218,9 @@ static void on_sensor_data(const event_t *event, void *user_data)
             // 窗口刚结束，执行最终计算
             ESP_LOGI(TAG, "HR measure window ended, finalizing results");
             s_ctx.measuring_active = false;
+
+            // 一次性计算 AC/DC 分量
+            calculate_ac_dc();
 
             // 最终计算心率和血氧
             uint8_t hr = calculate_heart_rate();
@@ -361,31 +365,42 @@ static void process_ppg_data(uint32_t red, uint32_t ir, uint32_t timestamp)
 
     // 峰值检测（用于心率计算）
     detect_peak(ir, timestamp);
+}
 
-    // 计算 AC/DC 分量（持续更新，供窗口结束时使用）
-    if (ppg->buffer_count >= PPG_BUFFER_SIZE / 2) {
-        uint32_t red_min = UINT32_MAX, red_max = 0;
-        uint32_t ir_min = UINT32_MAX, ir_max = 0;
-        uint64_t red_sum = 0, ir_sum = 0;
+// ============== AC/DC 分量计算 ==============
 
-        for (int i = 0; i < ppg->buffer_count; i++) {
-            uint32_t r = ppg->red_buffer[i];
-            uint32_t ir_val = ppg->ir_buffer[i];
+/**
+ * @brief 计算 PPG 缓冲区的 AC/DC 分量（窗口结束时调用一次）
+ */
+static void calculate_ac_dc(void)
+{
+    ppg_context_t *ppg = &s_ctx.ppg;
 
-            if (r < red_min) red_min = r;
-            if (r > red_max) red_max = r;
-            if (ir_val < ir_min) ir_min = ir_val;
-            if (ir_val > ir_max) ir_max = ir_val;
-
-            red_sum += r;
-            ir_sum += ir_val;
-        }
-
-        ppg->red_ac = red_max - red_min;
-        ppg->ir_ac = ir_max - ir_min;
-        ppg->red_dc = (uint32_t)(red_sum / ppg->buffer_count);
-        ppg->ir_dc = (uint32_t)(ir_sum / ppg->buffer_count);
+    if (ppg->buffer_count < PPG_BUFFER_SIZE / 2) {
+        return;
     }
+
+    uint32_t red_min = UINT32_MAX, red_max = 0;
+    uint32_t ir_min = UINT32_MAX, ir_max = 0;
+    uint64_t red_sum = 0, ir_sum = 0;
+
+    for (int i = 0; i < ppg->buffer_count; i++) {
+        uint32_t r = ppg->red_buffer[i];
+        uint32_t ir_val = ppg->ir_buffer[i];
+
+        if (r < red_min) red_min = r;
+        if (r > red_max) red_max = r;
+        if (ir_val < ir_min) ir_min = ir_val;
+        if (ir_val > ir_max) ir_max = ir_val;
+
+        red_sum += r;
+        ir_sum += ir_val;
+    }
+
+    ppg->red_ac = red_max - red_min;
+    ppg->ir_ac = ir_max - ir_min;
+    ppg->red_dc = (uint32_t)(red_sum / ppg->buffer_count);
+    ppg->ir_dc = (uint32_t)(ir_sum / ppg->buffer_count);
 }
 
 // ============== 心率计算 ==============

@@ -29,11 +29,6 @@ static void sensor_data_handler(const event_t *event, void *user_data)
 {
     const sensor_data_t *data = &event->data.sensor;
 
-    // 处理跌倒检测（每次 IMU 数据更新时调用）
-    if (data->data_valid & SENSOR_IMU) {
-        fall_detect_process(data->accel_x, data->accel_y, data->accel_z);
-    }
-
     // 每 5 秒打印一次传感器数据
     static uint32_t last_print = 0;
     if ((data->timestamp - last_print) >= 5000) {
