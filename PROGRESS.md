@@ -15,7 +15,7 @@
 | Week 2 | 迭代 2.3: 跌倒检测算法 | ✅ 已完成 | 2026-02-08 |
 | Week 2 | 迭代 2.4: BLE GATT 服务 + 数据上报 | ✅ 已完成 | 2026-02-15 |
 | Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | ✅ 已完成（ESP32 固件部分） | 2026-02-15 |
-| Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | 🔲 待开始 | - |
+| Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | ✅ 已完成 | 2026-02-16 |
 | Week 3 | 迭代 3.2: I2S 音频播放 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | 🔲 待开始 | - |
 | Week 3 | 迭代 3.4: 完整报警流程联调 | 🔲 待开始 | - |
@@ -462,5 +462,46 @@
   - 测试员发现 2 个 Major 级别问题（非阻塞）：
     1. s_last_nonce 线程安全依赖 NimBLE 单任务模型（MVP 可接受）
     2. EVT_ALARM_STATE 使用 ALERT_TYPE_NONE 代替缺失的 ALERT_TYPE_MANUAL（后续迭代补充枚举值）
+
+---
+
+### 2026-02-16 - 迭代 3.1: 报警状态机 + 声光控制
+
+- **迭代**: Week 3 - 迭代 3.1
+- **状态**: ✅ 已完成
+- **新建文件**:
+  - components/drivers/ws2812/include/ws2812.h（WS2812 RGB LED 驱动头文件）
+  - components/drivers/ws2812/ws2812.c（WS2812 驱动实现，RMT 外设 + FreeRTOS 定时器闪烁）
+  - components/services/alarm_manager/include/alarm_manager.h（报警管理器头文件，状态机接口定义）
+  - components/services/alarm_manager/alarm_manager.c（报警管理器实现，状态机 + WS2812 控制 + BLE Alarm）
+- **修改文件**:
+  - components/drivers/CMakeLists.txt（添加 ws2812 源文件和头文件路径）
+  - components/services/CMakeLists.txt（添加 alarm_manager 源文件和头文件路径，新增 ble_gatt 依赖）
+  - components/services/event_bus/include/event_bus.h（添加 ALERT_TYPE_MANUAL=8, ALERT_TYPE_CALL_FAMILY=9）
+  - main/main.c（集成 alarm_manager 和 ws2812 初始化，重构 SW1 回调使用状态机 API）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [ ] 模拟跌倒 → PRE_ALARM → 15秒后 ALARMING
+  - [ ] 按 SW1 取消 PRE_ALARM
+  - [ ] ALARMING 时 WS2812 红色闪烁
+- **功能说明**:
+  - 报警状态机: IDLE → PRE_ALARM → ALARMING → ACKED
+  - PRE_ALARM: 跌倒专用，15秒倒计时，WS2812 黄色闪烁(500ms)
+  - ALARMING: WS2812 红色快闪(200ms)，发送 BLE Alarm Notify
+  - ACKED: 绿色常亮 2 秒后自动回 IDLE
+  - SW1 短按: IDLE→手动报警, PRE_ALARM→取消
+  - SW1 长按: ALARMING→取消
+  - alarm_manager 自动订阅 EVT_HEALTH_ALERT 和 EVT_FALL_DETECTED 事件
+  - alert_type_t → ble_alarm_type_t 使用显式 switch 映射（两枚举值不同）
+- **编译结果**: ✅ 通过，二进制 643KB，app 分区 39% 空闲
+- **遗留问题**:
+  - BLE ACK_ALARM 命令尚未调用 alarm_ack()（ble_service.c:194 有 TODO），计划在迭代 3.4 联调时修复
+  - 迭代 2.5 遗留的 ALERT_TYPE_MANUAL 缺失问题已在本迭代中修复
+- **备注**:
+  - 由四人团队协作完成：team-lead（方案设计+协调+审查）、developer-1（WS2812 驱动+main.c 集成）、developer-2（event_bus 增强+alarm_manager 头文件+核心实现）、tester（代码审查）
+  - 子任务 A: WS2812 RGB LED 驱动（RMT + bytes encoder + FreeRTOS 定时器闪烁）
+  - 子任务 B: event_bus.h 补充 ALERT_TYPE_MANUAL/CALL_FAMILY + alarm_manager.h 接口定义
+  - 子任务 C: alarm_manager.c 状态机核心（互斥锁保护、事件订阅、BLE 报警发送）
+  - 子任务 D: main.c 集成（初始化顺序、SW1 回调重构、移除冗余 fall_detected_handler）
 
 ---

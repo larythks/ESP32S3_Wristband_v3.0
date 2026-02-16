@@ -7,6 +7,7 @@ idf_component_register(
         "ds18b20/onewire.c"
         "ds18b20/ds18b20.c"
         "button/button.c"
+        "ws2812/ws2812.c"
     INCLUDE_DIRS
         "common/include"
         "mpu6050/include"
@@ -14,5 +15,6 @@ idf_component_register(
         "max30102/include"
         "ds18b20/include"
         "button/include"
+        "ws2812/include"
     REQUIRES driver
 )

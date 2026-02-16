@@ -31,7 +31,7 @@ typedef struct {
 static event_bus_ctx_t s_ctx = {0};
 
 // 事件分发任务栈大小
-#define EVENT_DISPATCH_TASK_STACK   4096
+#define EVENT_DISPATCH_TASK_STACK   6144
 #define EVENT_DISPATCH_TASK_PRIO    5
 
 /**

@@ -235,3 +235,59 @@ ble_gap_adv_start(s_own_addr_type, ...);
 ```
 
 **涉及文件**：`sdkconfig`、`components/ble_gatt/ble_service.c`
+
+---
+
+## ISSUE-009：Timer Service 和事件分发任务栈大小不足，可能导致栈溢出
+
+**发现日期**：2026-02-16
+
+**原因**：
+迭代 3.1 引入 alarm_manager 后，Timer Service 任务的回调调用链显著加深：`pre_alarm_timer_cb` → `enter_state(ALARMING)` → `ws2812_blink_start`（RMT 传输）+ `send_ble_alarm`（`ble_notify_alarm` → NimBLE 内部）+ `publish_alarm_state_event`（`event_publish` → `xQueueSend`）。同样，事件分发任务中 `on_health_alert` → `alarm_trigger` → `enter_state` 也有相同深度的调用链。原有的 4096 字节栈在减去 FreeRTOS TCB 开销和局部变量（`ble_alarm_t` 16B + `event_data_t` 48B 等）后，安全余量不足。
+
+此外，SW1 按键回调运行在 Timer Service 任务上下文中（通过 button.c 的 FreeRTOS 定时器消抖），`sw1_callback` → `alarm_trigger` → `enter_state` 的调用链与上述问题叠加。
+
+**后果**：
+- 极端情况下 Timer Service 任务或事件分发任务可能发生栈溢出，导致系统不可预测的崩溃或重启
+- 问题难以调试（栈溢出通常不产生明确错误信息）
+
+**解决方案**：
+将两个任务的栈大小从 4096 增大到 6144 字节，提供充足的安全余量：
+
+```c
+// sdkconfig
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=6144  // 原 4096
+
+// event_bus.c
+#define EVENT_DISPATCH_TASK_STACK   6144  // 原 4096
+```
+
+额外 RAM 开销：2KB × 2 = 4KB，ESP32-S3 有 512KB SRAM，影响可忽略。
+
+**涉及文件**：`sdkconfig`、`components/services/event_bus/event_bus.c`
+
+---
+
+## ISSUE-010：ALARMING 状态下新报警不发布 EVT_ALARM_STATE 事件
+
+**发现日期**：2026-02-16
+
+**原因**：
+`alarm_manager.c` 的 `alarm_trigger()` 函数中，当系统已在 `ALARM_STATE_ALARMING` 状态时收到新报警，仅调用 `send_ble_alarm()` 重新发送 BLE 通知，但未调用 `publish_alarm_state_event()` 发布事件总线事件。
+
+**后果**：
+- 如果 UI 或其他模块订阅 `EVT_ALARM_STATE` 来显示当前报警详情（类型/数值），当报警类型变更时（例如先触发心率过高，随后又触发体温过高），订阅者不会收到更新通知
+- UI 可能显示过时的报警类型/数值
+
+**解决方案**：
+在 `ALARM_STATE_ALARMING` 分支中，`send_ble_alarm()` 之后补充 `publish_alarm_state_event()` 调用：
+
+```c
+case ALARM_STATE_ALARMING:
+    /* 已在报警中，更新数据并重新发送 BLE + 通知订阅者 */
+    send_ble_alarm();
+    publish_alarm_state_event();  // 新增：通知订阅者报警类型变更
+    break;
+```
+
+**涉及文件**：`components/services/alarm_manager/alarm_manager.c`
