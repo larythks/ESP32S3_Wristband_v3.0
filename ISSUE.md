@@ -238,6 +238,30 @@ ble_gap_adv_start(s_own_addr_type, ...);
 
 ---
 
+## ISSUE-012：BLE 连接后不触发配对流程，手机无需配对即可连接
+
+**发现日期**：2026-02-16
+
+**原因**：
+`ble_service.c` 的 `BLE_GAP_EVENT_CONNECT` 处理中，`ble_gap_security_initiate()` 调用被注释掉。ESP32 连接成功后不主动发起安全请求，而 Notify 特征（Telemetry FF01、Alarm FF02）未设置加密要求（仅 `BLE_GATT_CHR_F_NOTIFY`），手机可以直接订阅通知而无需配对。
+
+**后果**：
+- 任何手机无需配对即可连接并接收 Telemetry/Alarm 数据，存在安全隐患
+- Command (FF03) 的 `WRITE_ENC` 保护形同虚设（连接未加密时写入会被拒绝，但手机不会主动发起配对）
+
+**解决方案**：
+取消注释 `ble_gap_security_initiate()` 调用，连接建立后 ESP32 主动发起加密请求：
+
+```c
+/* 主动发起安全请求（触发配对/加密） */
+int sec_rc = ble_gap_security_initiate(s_conn_handle);
+if (sec_rc != 0) {
+    ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
+}
+```
+
+**涉及文件**：`components/ble_gatt/ble_service.c`---
+
 ## ISSUE-009：Timer Service 和事件分发任务栈大小不足，可能导致栈溢出
 
 **发现日期**：2026-02-16
@@ -291,3 +315,41 @@ case ALARM_STATE_ALARMING:
 ```
 
 **涉及文件**：`components/services/alarm_manager/alarm_manager.c`
+
+---
+
+## ISSUE-011：手机配对成功后立即断开连接
+
+**发现日期**：2026-02-16
+
+**原因**：
+`sdkconfig` 中 `CONFIG_BT_NIMBLE_GATT_CACHING=y` 启用了 GATT 缓存功能。当重复配对（`BLE_GAP_EVENT_REPEAT_PAIRING`）发生时，旧绑定被删除、新绑定被创建，但 GATT 缓存状态随旧绑定丢失。NimBLE 检测到新绑定无有效 GATT 缓存记录，可能向手机发送 Service Changed Indication，手机收到后主动断开连接以重新发现服务，但断连后未自动重连。
+
+日志表现为加密成功（`encrypted=1, bonded=1`）后，出现 `Subscribe event: handle=8, cur_notify=0`（handle=8 为标准 GATT Service Changed 特征），随后手机断开。
+
+**后果**：
+- 手机每次配对后立即断开，无法维持 BLE 连接
+- 所有依赖 BLE 连接的功能（Telemetry 上报、命令接收、报警通知）均无法使用
+
+**解决方案**：
+1. 关闭 GATT 缓存（`CONFIG_BT_NIMBLE_GATT_CACHING=n`），消除重复配对时缓存状态不一致的问题
+2. 增强 Subscribe 事件日志，同时打印 `cur_notify` 和 `cur_indicate`，便于后续诊断
+3. 将 Disconnect 日志从 INFO 提升为 WARN 级别，并同时输出十六进制原因码
+
+```c
+// sdkconfig 修改
+# CONFIG_BT_NIMBLE_GATT_CACHING is not set
+
+// Subscribe 日志增强
+ESP_LOGI(TAG, "Subscribe event: handle=%d, cur_notify=%d, cur_indicate=%d",
+         event->subscribe.attr_handle,
+         event->subscribe.cur_notify,
+         event->subscribe.cur_indicate);
+
+// Disconnect 日志增强
+ESP_LOGW(TAG, "Disconnected, reason=%d (0x%02X)",
+         event->disconnect.reason,
+         event->disconnect.reason);
+```
+
+**涉及文件**：`sdkconfig`、`components/ble_gatt/ble_service.c`

@@ -352,11 +352,11 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
             s_conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "Connected, handle=%d", s_conn_handle);
 
-            // /* 主动发起安全请求（触发配对/加密） */
-            // int sec_rc = ble_gap_security_initiate(s_conn_handle);
-            // if (sec_rc != 0) {
-            //     ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
-            // }
+            /* 主动发起安全请求（触发配对/加密） */
+            int sec_rc = ble_gap_security_initiate(s_conn_handle);
+            if (sec_rc != 0) {
+                ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
+            }
 
             /* 发布 BLE 连接事件到事件总线 */
             event_data_t evt_data;
@@ -372,7 +372,8 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "Disconnected, reason=%d",
+        ESP_LOGW(TAG, "Disconnected, reason=%d (0x%02X)",
+                 event->disconnect.reason,
                  event->disconnect.reason);
         s_connected = false;
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -401,9 +402,10 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_SUBSCRIBE:
-        ESP_LOGI(TAG, "Subscribe event: handle=%d, cur_notify=%d",
+        ESP_LOGI(TAG, "Subscribe event: handle=%d, cur_notify=%d, cur_indicate=%d",
                  event->subscribe.attr_handle,
-                 event->subscribe.cur_notify);
+                 event->subscribe.cur_notify,
+                 event->subscribe.cur_indicate);
         break;
 
     /* 安全相关事件转发到 ble_security 模块 */
