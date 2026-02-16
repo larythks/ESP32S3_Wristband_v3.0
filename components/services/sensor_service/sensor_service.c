@@ -63,14 +63,6 @@ typedef struct {
 static sensor_service_ctx_t s_ctx = {0};
 
 /**
- * @brief 获取当前时间戳 (ms)
- */
-static uint32_t get_timestamp_ms(void)
-{
-    return (uint32_t)(esp_timer_get_time() / 1000);
-}
-
-/**
  * @brief 异步采样温度传感器 - 启动转换
  * @return true 如果成功启动转换
  */
@@ -413,8 +405,8 @@ esp_err_t sensor_set_mode(uint8_t sensor_mask, sampling_mode_t mode)
 
     if (sensor_mask & SENSOR_HR_SPO2) {
         s_ctx.hr_mode = mode;
-        // ESP_LOGI(TAG, "HR mode: %s",
-        //          mode == SAMPLING_MODE_REALTIME ? "REALTIME" : "NORMAL");
+        ESP_LOGI(TAG, "HR mode: %s",
+                 mode == SAMPLING_MODE_REALTIME ? "REALTIME" : "NORMAL");
     }
 
     // 发布采样模式变更事件

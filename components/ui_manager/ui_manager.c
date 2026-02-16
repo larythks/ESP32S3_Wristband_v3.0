@@ -232,21 +232,21 @@ static void step_refresh_timer_callback(TimerHandle_t timer)
             if (elapsed_ms >= SENSOR_HR_MEASURE_WINDOW_MS) {
                 /* 倒计时结束，进入等待阶段，等 health_monitor 完成计算 */
                 s_manual_phase = MANUAL_PHASE_WAIT_RESULT;
-                ESP_LOGI("ui_manager", "Manual measure countdown done, waiting for result");
+                ESP_LOGI(TAG, "Manual measure countdown done, waiting for result");
             }
             draw_manual_measure_page();
         } else if (s_manual_phase == MANUAL_PHASE_WAIT_RESULT) {
             /* 等待一个 timer 周期（500ms），确保 health_monitor 已完成计算 */
             s_manual_phase = MANUAL_PHASE_RESULT;
             s_result_start_us = now_us;
-            ESP_LOGI("ui_manager", "Showing manual measure result");
+            ESP_LOGI(TAG, "Showing manual measure result");
             draw_manual_measure_page();
         } else {
             /* MANUAL_PHASE_RESULT */
             int64_t result_elapsed_ms = (now_us - s_result_start_us) / 1000;
             if (result_elapsed_ms >= UI_MANUAL_RESULT_DISPLAY_MS) {
                 /* 结果展示 5 秒结束，自动退出 */
-                ESP_LOGI("ui_manager", "Result display timeout, auto exit");
+                ESP_LOGI(TAG, "Result display timeout, auto exit");
                 ui_exit_manual_measure();
             }
         }

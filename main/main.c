@@ -10,6 +10,8 @@
 #include "button.h"
 #include "ui_manager.h"
 #include "event_bus.h"
+#include "alarm_manager.h"
+#include "ws2812.h"
 #include "sensor_service.h"
 #include "health_monitor.h"
 #include "pedometer.h"
@@ -21,32 +23,16 @@
 static const char *TAG = "main";
 
 /**
- * @brief 跌倒检测事件处理回调
- */
-static void fall_detected_handler(const event_t *event, void *user_data)
-{
-    const health_alert_t *alert = &event->data.health_alert;
-    ESP_LOGW(TAG, "!!! FALL DETECTED !!! Peak SVM: %.1fg, Time: %lu",
-             alert->value / 10.0f, (unsigned long)alert->timestamp);
-    // TODO: 后续迭代中触发报警状态机
-}
-
-/**
  * @brief 传感器数据事件处理回调
  */
 static void sensor_data_handler(const event_t *event, void *user_data)
 {
     const sensor_data_t *data = &event->data.sensor;
 
-    // 处理跌倒检测（每次 IMU 数据更新时调用）
-    if (data->data_valid & SENSOR_IMU) {
-        fall_detect_process(data->accel_x, data->accel_y, data->accel_z);
-    }
-
     // 每 5 秒打印一次传感器数据
     static uint32_t last_print = 0;
     if ((data->timestamp - last_print) >= 5000) {
-        ESP_LOGI(TAG, "[SENSOR] temp=%.1f ax=%d ay=%d az=%d",
+        ESP_LOGD(TAG, "[SENSOR] temp=%.1f ax=%d ay=%d az=%d",
                  data->temperature,
                  data->accel_x, data->accel_y, data->accel_z);
         last_print = data->timestamp;
@@ -58,41 +44,21 @@ static void sensor_data_handler(const event_t *event, void *user_data)
  */
 static void sw1_callback(button_id_t id, button_event_t event)
 {
+    alarm_state_t state = alarm_get_state();
+
     if (event == BUTTON_EVENT_SHORT_PRESS) {
-        ESP_LOGI(TAG, "SW1 short press - Manual alarm triggered");
-
-        /* 递增事件 ID（掉电重置，MVP 可接受） */
-        static uint32_t alarm_event_id = 0;
-        alarm_event_id++;
-
-        /* 组装 BLE Alarm 数据包 */
-        ble_alarm_t alarm = {0};
-        alarm.event_id  = alarm_event_id;
-        alarm.alarm_type = BLE_ALARM_TYPE_MANUAL;
-        alarm.value     = 0;
-        alarm.battery   = BLE_BATTERY_DEFAULT;
-        alarm.timestamp = ble_get_unix_timestamp();
-
-        /* 发送 BLE Alarm Notify */
-        esp_err_t ret = ble_notify_alarm(&alarm);
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Alarm notify sent: id=%lu type=%d",
-                     (unsigned long)alarm.event_id, alarm.alarm_type);
-        } else {
-            ESP_LOGW(TAG, "Alarm notify failed: %s (not connected?)",
-                     esp_err_to_name(ret));
+        if (state == ALARM_STATE_IDLE) {
+            ESP_LOGI(TAG, "SW1 short press - Manual alarm triggered");
+            alarm_trigger(ALERT_TYPE_MANUAL, NULL);
+        } else if (state == ALARM_STATE_PRE_ALARM) {
+            ESP_LOGI(TAG, "SW1 short press - Cancel pre-alarm");
+            alarm_cancel();
         }
-
-        /* 发布 EVT_ALARM_STATE 到事件总线 */
-        event_data_t evt_data = {0};
-        evt_data.health_alert.type      = ALERT_TYPE_NONE;
-        evt_data.health_alert.level     = ALERT_LEVEL_ALARM;
-        evt_data.health_alert.value     = 0;
-        evt_data.health_alert.timestamp = alarm.timestamp;
-        event_publish(EVT_ALARM_STATE, &evt_data);
-
     } else if (event == BUTTON_EVENT_LONG_PRESS) {
-        ESP_LOGI(TAG, "SW1 long press - Reserved for cancel alarm");
+        if (state == ALARM_STATE_ALARMING) {
+            ESP_LOGI(TAG, "SW1 long press - Cancel alarm");
+            alarm_cancel();
+        }
     }
 }
 
@@ -205,6 +171,18 @@ void app_main(void)
         ESP_LOGE(TAG, "Event bus init failed!");
     }
 
+    // 初始化 WS2812 RGB LED
+    ret = ws2812_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "WS2812 init failed!");
+    }
+
+    // 初始化报警管理器
+    ret = alarm_manager_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Alarm manager init failed!");
+    }
+
     // 初始化传感器服务
     ret = sensor_service_init();
     if (ret != ESP_OK) {
@@ -256,9 +234,6 @@ void app_main(void)
         ESP_LOGE(TAG, "Fall detect start failed!");
     }
 
-    // 订阅跌倒检测事件
-    event_subscribe(EVT_FALL_DETECTED, fall_detected_handler, NULL);
-
     // 初始化 BLE 服务（在所有传感器和服务初始化完成后）
     ret = ble_service_init();
     if (ret != ESP_OK) {
@@ -270,7 +245,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "System initialization complete.");
     ESP_LOGI(TAG, "Press SW2 to switch pages, long press SW2 for manual measure.");
-    ESP_LOGI(TAG, "Press SW1 for manual alarm (BLE Notify).");
+    ESP_LOGI(TAG, "Press SW1 to trigger/cancel alarm.");
 
     // 主循环：保持系统运行，按键和 UI 由各自模块处理
     while (1) {

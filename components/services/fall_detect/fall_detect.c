@@ -73,14 +73,6 @@ static fall_detect_ctx_t s_ctx = {0};
 // ============================================================================
 
 /**
- * @brief 获取当前时间戳 (ms)
- */
-static uint32_t get_timestamp_ms(void)
-{
-    return (uint32_t)(esp_timer_get_time() / 1000);
-}
-
-/**
  * @brief 将原始加速度值转换为 g
  */
 static float raw_to_g(int16_t raw)
@@ -320,6 +312,24 @@ static void process_state_post_impact(const accel_sample_t *sample)
 }
 
 // ============================================================================
+// 事件总线回调
+// ============================================================================
+
+/**
+ * @brief 传感器数据事件回调 - 自动接收 IMU 数据进行跌倒检测
+ */
+static void on_sensor_data(const event_t *event, void *user_data)
+{
+    (void)user_data;
+    if (!s_ctx.running || event == NULL) return;
+
+    const sensor_data_t *data = &event->data.sensor;
+    if (data->data_valid & SENSOR_IMU) {
+        fall_detect_process(data->accel_x, data->accel_y, data->accel_z);
+    }
+}
+
+// ============================================================================
 // 公共 API 实现
 // ============================================================================
 
@@ -355,6 +365,9 @@ esp_err_t fall_detect_start(void)
     s_ctx.history_head = 0;
     s_ctx.history_count = 0;
 
+    // 订阅传感器数据事件，自动接收 IMU 数据
+    event_subscribe(EVT_SENSOR_DATA, on_sensor_data, NULL);
+
     ESP_LOGI(TAG, "Fall detect started");
     return ESP_OK;
 }
@@ -364,6 +377,7 @@ esp_err_t fall_detect_start(void)
  */
 esp_err_t fall_detect_stop(void)
 {
+    event_unsubscribe(EVT_SENSOR_DATA, on_sensor_data);
     s_ctx.running = false;
     ESP_LOGI(TAG, "Fall detect stopped");
     return ESP_OK;

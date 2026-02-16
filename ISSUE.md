@@ -207,31 +207,49 @@ return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
 
 ---
 
-## ISSUE-008：BLE 配对始终失败（首次配对无法成功）
+---
 
-**发现日期**：2026-02-15
+## ISSUE-010：ALARMING 状态下新报警不发布 EVT_ALARM_STATE 事件
+
+**发现日期**：2026-02-16
 
 **原因**：
-`sdkconfig` 中 `CONFIG_BT_NIMBLE_SM_SC_LVL` 被配置为 `1`。在 NimBLE 中该级别对应“无安全级别”，会在配对流程中返回 `BLE_SM_ERR_CMD_NOT_SUPP`，导致手机发起配对时被协议栈拒绝。  
-同时，代码中广播固定使用 `BLE_OWN_ADDR_PUBLIC`，未使用 `ble_hs_id_infer_auto()` 推断出的地址类型；在部分设备组合下会增加连接/安全流程不稳定风险。
+`alarm_manager.c` 的 `alarm_trigger()` 函数中，当系统已在 `ALARM_STATE_ALARMING` 状态时收到新报警，仅调用 `send_ble_alarm()` 重新发送 BLE 通知，但未调用 `publish_alarm_state_event()` 发布事件总线事件。
 
 **后果**：
-- 手机端始终提示“配对失败”，历史上从未成功建立 bonded 关系
-- `Command(FF03)` 的加密写入链路无法按预期建立，安全功能不可用
-- 后续若 bond 存储达到上限（`MAX_BONDS=1`），重配对稳定性进一步下降
+- 如果 UI 或其他模块订阅 `EVT_ALARM_STATE` 来显示当前报警详情（类型/数值），当报警类型变更时（例如先触发心率过高，随后又触发体温过高），订阅者不会收到更新通知
+- UI 可能显示过时的报警类型/数值
 
 **解决方案**：
-1. 将 `CONFIG_BT_NIMBLE_SM_SC_LVL` 从 `1` 调整为 `2`，允许 NoInputNoOutput（Just Works）场景下完成未认证加密配对。
-2. 广播启动时改为使用 `ble_hs_id_infer_auto()` 推断得到的 `own_addr_type`，并在 `on_sync` 中先调用 `ble_hs_util_ensure_addr(0)` 确保地址可用。
-3. 增加 `ble_hs_cfg.store_status_cb = ble_store_util_status_rr`，在 bond 满额时可自动回收旧记录，避免后续重复配对失败。
+在 `ALARM_STATE_ALARMING` 分支中，`send_ble_alarm()` 之后补充 `publish_alarm_state_event()` 调用：
 
 ```c
-// 关键修复
-CONFIG_BT_NIMBLE_SM_SC_LVL=2
-
-ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
-rc = ble_hs_id_infer_auto(0, &s_own_addr_type);
-ble_gap_adv_start(s_own_addr_type, ...);
+case ALARM_STATE_ALARMING:
+    /* 已在报警中，更新数据并重新发送 BLE + 通知订阅者 */
+    send_ble_alarm();
+    publish_alarm_state_event();  // 新增：通知订阅者报警类型变更
+    break;
 ```
 
-**涉及文件**：`sdkconfig`、`components/ble_gatt/ble_service.c`
+---
+
+## ISSUE-012：ui_manager 日志 TAG 使用不一致
+
+**发现日期**：2026-02-16
+
+**原因**：
+`ui_manager.c` 中有3处 `ESP_LOGI` 调用使用了字符串字面量 `"ui_manager"` 而非已定义的 `TAG` 变量。虽然输出内容相同，但不符合项目编码规范，且如果未来修改 TAG 值，这些日志不会同步更新。
+
+**后果**：
+- 代码一致性问题，不符合 ESP-IDF 日志最佳实践
+- 如果 TAG 值修改，这3条日志不会同步变更
+
+**解决方案**：
+将第235、242、249行的 `"ui_manager"` 替换为 `TAG`：
+
+```c
+// 改前: ESP_LOGI("ui_manager", "...");
+// 改后: ESP_LOGI(TAG, "...");
+```
+
+**涉及文件**：`components/ui_manager/ui_manager.c`

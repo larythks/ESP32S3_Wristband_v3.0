@@ -350,13 +350,12 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_connected = true;
             s_conn_handle = event->connect.conn_handle;
-            ESP_LOGI(TAG, "Connected, handle=%d", s_conn_handle);
 
-            // /* 主动发起安全请求（触发配对/加密） */
-            // int sec_rc = ble_gap_security_initiate(s_conn_handle);
-            // if (sec_rc != 0) {
-            //     ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
-            // }
+            /* 主动发起安全请求（触发配对/加密） */
+            int sec_rc = ble_gap_security_initiate(s_conn_handle);
+            if (sec_rc != 0) {
+                ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
+            }
 
             /* 发布 BLE 连接事件到事件总线 */
             event_data_t evt_data;
@@ -372,7 +371,8 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "Disconnected, reason=%d",
+        ESP_LOGW(TAG, "Disconnected, reason=%d (0x%02X)",
+                 event->disconnect.reason,
                  event->disconnect.reason);
         s_connected = false;
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -390,20 +390,21 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        ESP_LOGI(TAG, "Advertising complete");
+        ESP_LOGD(TAG, "Advertising complete");
         /* 广播超时后重新广播 */
         ble_start_advertise();
         break;
 
     case BLE_GAP_EVENT_MTU:
-        ESP_LOGI(TAG, "MTU updated: conn_handle=%d, mtu=%d",
+        ESP_LOGD(TAG, "MTU updated: conn_handle=%d, mtu=%d",
                  event->mtu.conn_handle, event->mtu.value);
         break;
 
     case BLE_GAP_EVENT_SUBSCRIBE:
-        ESP_LOGI(TAG, "Subscribe event: handle=%d, cur_notify=%d",
+        ESP_LOGD(TAG, "Subscribe event: handle=%d, cur_notify=%d, cur_indicate=%d",
                  event->subscribe.attr_handle,
-                 event->subscribe.cur_notify);
+                 event->subscribe.cur_notify,
+                 event->subscribe.cur_indicate);
         break;
 
     /* 安全相关事件转发到 ble_security 模块 */
@@ -524,7 +525,7 @@ static esp_err_t send_telemetry_now(void)
     /* 发送 Notify */
     ret = ble_notify_telemetry(&pkt);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu ts=%lu",
+        ESP_LOGD(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu ts=%lu",
                  pkt.temp, pkt.heart_rate, pkt.spo2,
                  (unsigned long)pkt.steps, (unsigned long)pkt.timestamp);
     } else {
@@ -628,54 +629,42 @@ esp_err_t ble_service_init(void)
     return ESP_OK;
 }
 
-esp_err_t ble_notify_telemetry(const ble_telemetry_t *data)
+/**
+ * @brief 通用 BLE Notify 发送辅助函数
+ */
+static esp_err_t ble_notify_raw(uint16_t attr_handle,
+                                const void *data, size_t len,
+                                const char *name)
 {
     if (data == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-
     if (!s_connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
         return ESP_ERR_INVALID_STATE;
     }
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, sizeof(ble_telemetry_t));
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
     if (om == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate mbuf for telemetry");
+        ESP_LOGE(TAG, "Failed to allocate mbuf for %s", name);
         return ESP_ERR_NO_MEM;
     }
-
-    int rc = ble_gatts_notify_custom(s_conn_handle, s_telemetry_val_handle, om);
+    int rc = ble_gatts_notify_custom(s_conn_handle, attr_handle, om);
     if (rc != 0) {
-        ESP_LOGW(TAG, "Telemetry notify failed, rc=%d", rc);
+        ESP_LOGW(TAG, "%s notify failed, rc=%d", name, rc);
         return ESP_FAIL;
     }
-
     return ESP_OK;
+}
+
+esp_err_t ble_notify_telemetry(const ble_telemetry_t *data)
+{
+    return ble_notify_raw(s_telemetry_val_handle,
+                          data, sizeof(ble_telemetry_t), "telemetry");
 }
 
 esp_err_t ble_notify_alarm(const ble_alarm_t *data)
 {
-    if (data == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    if (!s_connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, sizeof(ble_alarm_t));
-    if (om == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate mbuf for alarm");
-        return ESP_ERR_NO_MEM;
-    }
-
-    int rc = ble_gatts_notify_custom(s_conn_handle, s_alarm_val_handle, om);
-    if (rc != 0) {
-        ESP_LOGW(TAG, "Alarm notify failed, rc=%d", rc);
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
+    return ble_notify_raw(s_alarm_val_handle,
+                          data, sizeof(ble_alarm_t), "alarm");
 }
 
 bool ble_is_connected(void)

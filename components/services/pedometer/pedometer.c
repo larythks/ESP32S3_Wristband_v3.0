@@ -35,6 +35,7 @@ static pedometer_ctx_t s_ctx = {0};
 // ============== 前向声明 ==============
 
 static void on_sensor_data(const event_t *event, void *user_data);
+static void pedometer_feed_data(int16_t ax, int16_t ay, int16_t az, uint32_t timestamp);
 static int32_t calculate_svm(int16_t ax, int16_t ay, int16_t az);
 static int32_t apply_filter(int32_t value);
 
@@ -102,7 +103,7 @@ void pedometer_reset(void)
 
 // ============== 数据输入接口 ==============
 
-void pedometer_feed_data(int16_t ax, int16_t ay, int16_t az, uint32_t timestamp)
+static void pedometer_feed_data(int16_t ax, int16_t ay, int16_t az, uint32_t timestamp)
 {
     if (!s_ctx.running) {
         return;

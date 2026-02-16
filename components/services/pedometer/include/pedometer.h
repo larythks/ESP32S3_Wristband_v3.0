@@ -52,15 +52,6 @@ uint32_t pedometer_get_steps(void);
  */
 void pedometer_reset(void);
 
-/**
- * @brief 输入加速度数据进行计步
- * @param ax 加速度 X
- * @param ay 加速度 Y
- * @param az 加速度 Z
- * @param timestamp 时间戳 (ms)
- */
-void pedometer_feed_data(int16_t ax, int16_t ay, int16_t az, uint32_t timestamp);
-
 #ifdef __cplusplus
 }
 #endif
