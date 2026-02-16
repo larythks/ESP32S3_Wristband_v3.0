@@ -37,7 +37,7 @@ static void sensor_data_handler(const event_t *event, void *user_data)
     // 每 5 秒打印一次传感器数据
     static uint32_t last_print = 0;
     if ((data->timestamp - last_print) >= 5000) {
-        ESP_LOGI(TAG, "[SENSOR] temp=%.1f ax=%d ay=%d az=%d",
+        ESP_LOGD(TAG, "[SENSOR] temp=%.1f ax=%d ay=%d az=%d",
                  data->temperature,
                  data->accel_x, data->accel_y, data->accel_z);
         last_print = data->timestamp;

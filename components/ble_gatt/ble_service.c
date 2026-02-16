@@ -350,7 +350,6 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_connected = true;
             s_conn_handle = event->connect.conn_handle;
-            ESP_LOGI(TAG, "Connected, handle=%d", s_conn_handle);
 
             /* 主动发起安全请求（触发配对/加密） */
             int sec_rc = ble_gap_security_initiate(s_conn_handle);
@@ -391,18 +390,18 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        ESP_LOGI(TAG, "Advertising complete");
+        ESP_LOGD(TAG, "Advertising complete");
         /* 广播超时后重新广播 */
         ble_start_advertise();
         break;
 
     case BLE_GAP_EVENT_MTU:
-        ESP_LOGI(TAG, "MTU updated: conn_handle=%d, mtu=%d",
+        ESP_LOGD(TAG, "MTU updated: conn_handle=%d, mtu=%d",
                  event->mtu.conn_handle, event->mtu.value);
         break;
 
     case BLE_GAP_EVENT_SUBSCRIBE:
-        ESP_LOGI(TAG, "Subscribe event: handle=%d, cur_notify=%d, cur_indicate=%d",
+        ESP_LOGD(TAG, "Subscribe event: handle=%d, cur_notify=%d, cur_indicate=%d",
                  event->subscribe.attr_handle,
                  event->subscribe.cur_notify,
                  event->subscribe.cur_indicate);
@@ -526,7 +525,7 @@ static esp_err_t send_telemetry_now(void)
     /* 发送 Notify */
     ret = ble_notify_telemetry(&pkt);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu ts=%lu",
+        ESP_LOGD(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu ts=%lu",
                  pkt.temp, pkt.heart_rate, pkt.spo2,
                  (unsigned long)pkt.steps, (unsigned long)pkt.timestamp);
     } else {

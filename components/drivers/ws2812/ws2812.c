@@ -228,7 +228,7 @@ esp_err_t ws2812_blink_start(uint8_t r, uint8_t g, uint8_t b, uint32_t interval_
     xTimerChangePeriod(s_ctx.blink_timer, pdMS_TO_TICKS(interval_ms), 0);
     /* xTimerChangePeriod also starts the timer */
 
-    ESP_LOGI(TAG, "Blink started: R=%u G=%u B=%u interval=%lu ms",
+    ESP_LOGD(TAG, "Blink started: R=%u G=%u B=%u interval=%lu ms",
              r, g, b, (unsigned long)interval_ms);
     return ESP_OK;
 }
@@ -246,6 +246,6 @@ esp_err_t ws2812_blink_stop(void)
     /* Turn off LED */
     ws2812_send_rgb(0, 0, 0);
 
-    ESP_LOGI(TAG, "Blink stopped");
+    ESP_LOGD(TAG, "Blink stopped");
     return ESP_OK;
 }

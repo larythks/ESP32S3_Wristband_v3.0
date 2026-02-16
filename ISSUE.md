@@ -231,6 +231,25 @@ case ALARM_STATE_ALARMING:
     break;
 ```
 
-**涉及文件**：`components/services/alarm_manager/alarm_manager.c`
-
 ---
+
+## ISSUE-012：ui_manager 日志 TAG 使用不一致
+
+**发现日期**：2026-02-16
+
+**原因**：
+`ui_manager.c` 中有3处 `ESP_LOGI` 调用使用了字符串字面量 `"ui_manager"` 而非已定义的 `TAG` 变量。虽然输出内容相同，但不符合项目编码规范，且如果未来修改 TAG 值，这些日志不会同步更新。
+
+**后果**：
+- 代码一致性问题，不符合 ESP-IDF 日志最佳实践
+- 如果 TAG 值修改，这3条日志不会同步变更
+
+**解决方案**：
+将第235、242、249行的 `"ui_manager"` 替换为 `TAG`：
+
+```c
+// 改前: ESP_LOGI("ui_manager", "...");
+// 改后: ESP_LOGI(TAG, "...");
+```
+
+**涉及文件**：`components/ui_manager/ui_manager.c`

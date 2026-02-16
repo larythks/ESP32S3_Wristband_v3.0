@@ -524,17 +524,17 @@ static void check_alerts(uint32_t timestamp)
     s_ctx.status.alert_level = new_level;
     s_ctx.status.alert_value = alert_value;
 
-    // // 发布告警事件
-    // if (new_level >= ALERT_LEVEL_ALARM) {
-    //     publish_health_alert(new_alert, new_level, alert_value, timestamp);
-    // }
+    // 发布告警事件
+    if (new_level >= ALERT_LEVEL_ALARM) {
+        publish_health_alert(new_alert, new_level, alert_value, timestamp);
+    }
 }
 
 // ============== 告警发布 ==============
 
 static void publish_health_alert(alert_type_t type, alert_level_t level, int16_t value, uint32_t timestamp)
 {
-    // ESP_LOGW(TAG, "Health alert: type=%d, level=%d, value=%d", type, level, value);
+    ESP_LOGW(TAG, "Health alert: type=%d, level=%d, value=%d", type, level, value);
 
     // 触发对应传感器进入实时检测模式
     uint8_t sensor_mask = 0;

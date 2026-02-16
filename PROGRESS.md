@@ -506,3 +506,32 @@
 
 ---
 
+### 迭代 3.1 后代码优化
+
+- **完成日期**: 2026-02-16
+- **任务简述**: 清理迭代 1.1 ~ 3.1 开发过程中积累的调试代码，恢复误注释的功能代码，统一日志规范
+- **对应开发计划**: 迭代 3.1 后、迭代 3.2 前的维护性优化
+- **修改/新增的文件列表**:
+  - main/main.c（ESP_LOGI -> ESP_LOGD：降级周期性传感器数据打印）
+  - components/services/sensor_service/sensor_service.c（恢复注释的 HR 模式变更日志）
+  - components/services/health_monitor/health_monitor.c（恢复注释的 publish_health_alert() 调用和告警日志）
+  - components/ble_gatt/ble_service.c（删除重复连接日志；ESP_LOGI -> ESP_LOGD：广播完成/MTU/Subscribe/Telemetry 发送）
+  - components/ui_manager/ui_manager.c（修复 TAG 使用不一致：字符串字面量 -> TAG 变量）
+  - components/drivers/ws2812/ws2812.c（ESP_LOGI -> ESP_LOGD：闪烁开始/停止日志）
+  - ISSUE.md（新增 ISSUE-011、ISSUE-012）
+  - PROGRESS.md（新增本记录）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] 编译通过，无错误，无新增警告
+  - [x] 二进制大小正常（627KB，app 分区 40% 空闲）
+  - [x] 代码审查通过（测试员确认逻辑正确性、日志级别合理性、功能完整性、资源评估）
+  - [x] 实机测试：健康告警能否正常触发 alarm_manager（恢复 publish_health_alert 后）
+- **遗留问题**:
+  - 恢复 publish_health_alert() 后，需要实机测试验证健康告警 -> 报警状态机的完整链路
+- **备注**:
+  - 由四人团队协作完成：team-lead（方案设计+任务分配+代码审查）、developer-1（main.c/sensor_service.c/health_monitor.c）、developer-2（ble_service.c/ui_manager.c/ws2812.c）、tester（代码审查+逻辑验证）
+  - 本次优化为非功能性修改（bug 修复 + 日志精简），不影响现有功能
+  - 修复了一个重要 bug：health_monitor 健康告警无法发布到事件总线（ISSUE-011）
+
+---
+
