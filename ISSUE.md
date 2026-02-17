@@ -369,3 +369,97 @@ if (s_ctx.ppg_result_fresh) {
 ```
 
 **涉及文件**：`components/services/health_monitor/health_monitor.c`
+
+---
+
+## ISSUE-017：OLED 花屏 — 多任务并发操作帧缓冲区/I2C 总线导致显示数据损坏
+
+**发现日期**：2026-02-17
+
+**原因**：
+
+SH1106 OLED 驱动（`sh1106.c`）和 UI 管理器（`ui_manager.c`）的所有函数均无线程安全保护。系统中存在多个并发访问路径：
+
+1. **UI 定时刷新定时器回调**（500ms 周期，运行在 Timer Service 任务）
+2. **按键事件回调**（`ui_switch_page()`、`ui_enter_manual_measure()` 等，运行在按键任务或 ISR 上下文）
+3. **报警状态变化**（可能触发 `ui_update()`）
+4. **2 分钟自动刷新定时器回调**
+
+当两个任务同时操作 `s_buffer[]` 帧缓冲区时，一个任务正在写入新页面数据，另一个任务同时调用 `sh1106_update()` 将缓冲区刷写到 I2C 总线，导致：
+- 帧缓冲区数据半新半旧，OLED 显示内容错乱（花屏）
+- I2C 总线命令交错，SH1106 接收到错误的页地址/列地址命令，后续页面数据写入错误位置
+
+此外，WS2812 LED 在报警状态下以满亮度（RGB 255）驱动，瞬时电流尖峰可能影响 I2C 总线电平稳定性，加剧花屏现象。
+
+**后果**：
+- OLED 屏幕随机出现花屏、乱码、部分区域显示错误内容
+- 严重时整屏数据错乱，需要等待下一次全屏刷新才能恢复
+- 在报警 LED 闪烁期间花屏概率更高
+
+**解决方案**：
+
+从软件和硬件两个层面同时修复：
+
+**1. SH1106 驱动层 — 互斥锁保护（`sh1106.c`）**
+
+新增 `SemaphoreHandle_t s_mutex` 互斥锁和 `s_initialized` 初始化标志。将绘制函数拆分为内部 `_raw` 版本（无锁）和公开版本（加锁）：
+
+```c
+static SemaphoreHandle_t s_mutex = NULL;
+static bool s_initialized = false;
+
+// 内部无锁版本
+static inline void sh1106_draw_pixel_raw(...) { ... }
+static void sh1106_draw_char_raw(...) { ... }
+static void sh1106_draw_string_raw(...) { ... }
+
+// 公开加锁版本
+void sh1106_draw_string(int16_t x, int16_t y, const char *str, uint8_t color)
+{
+    if (!s_initialized) return;
+    if (!sh1106_lock(pdMS_TO_TICKS(20))) return;
+    sh1106_draw_string_raw(x, y, str, color);
+    sh1106_unlock();
+}
+```
+
+所有公开 API（`sh1106_clear`、`sh1106_fill`、`sh1106_update`、`sh1106_draw_pixel`、`sh1106_draw_char`、`sh1106_draw_string`、`sh1106_display_on`、`sh1106_set_contrast`）均加锁保护。`sh1106_update()` 中对每页 I2C 写入增加错误检查，失败时 break 避免写入垃圾数据。
+
+**2. UI 管理器层 — 互斥锁保护（`ui_manager.c`）**
+
+新增 `SemaphoreHandle_t s_ui_mutex` 保护 UI 状态变量（`s_current_page`、`s_manual_measuring` 等）。
+
+定时器回调使用非阻塞获取锁（`ui_lock(0)`），锁被占用时跳过本次刷新：
+
+```c
+static void step_refresh_timer_callback(TimerHandle_t timer)
+{
+    if (!ui_lock(0)) {
+        ESP_LOGD(TAG, "Skip step refresh: lock busy");
+        return;
+    }
+    // ... 刷新逻辑 ...
+    ui_unlock();
+}
+```
+
+新增 `ui_update_locked()` 和 `ui_exit_manual_measure_locked()` 内部函数，供已持有锁的上下文调用，避免重复加锁导致死锁。
+
+**3. 报警 LED 亮度降低（`alarm_manager.c`）**
+
+降低 WS2812 LED 驱动亮度，减少电流尖峰对 I2C 总线的干扰：
+
+```c
+#define LED_BRIGHTNESS_PREALARM 48   // 原 255
+#define LED_BRIGHTNESS_ALARM    64   // 原 255
+#define LED_BRIGHTNESS_ACKED    48   // 原 255
+
+// PRE_ALARM: (255,165,0) -> (48,32,0)
+// ALARMING:  (255,0,0)   -> (64,0,0)
+// ACKED:     (0,255,0)   -> (0,48,0)
+```
+
+**涉及文件**：
+- `components/drivers/sh1106/sh1106.c`
+- `components/ui_manager/ui_manager.c`
+- `components/services/alarm_manager/alarm_manager.c`
