@@ -461,3 +461,49 @@ static void step_refresh_timer_callback(TimerHandle_t timer)
 - `components/drivers/sh1106/sh1106.c`
 - `components/ui_manager/ui_manager.c`
 - `components/services/alarm_manager/alarm_manager.c`
+
+---
+
+## ISSUE-015：Home 页“星期X”中文显示乱码（字模数据不可辨识）
+
+**发现日期**：2026-02-17
+
+**原因**：
+`components/drivers/sh1106/include/font_cn.h` 中的 12x12 中文字模是手写近似值，尤其“星”“期”等复杂字在 OLED 上笔画组合失真，导致实际显示效果接近乱码。
+
+**后果**：
+- Home 页顶部“星期X”字段难以辨认
+- 日期时间页观感不符合迭代 1.5 验收预期（“中文星期显示正确”）
+
+**解决方案**：
+将 `font_cn.h` 的 9 个字符（星/期/一/二/三/四/五/六/日）替换为重新生成的 12x12 位图字模（按当前 `sh1106_draw_chinese()` 的“行优先 + 高位在左”格式组织），保持现有渲染逻辑不变，仅修正字模数据。
+
+**涉及文件**：
+- `components/drivers/sh1106/include/font_cn.h`
+
+---
+
+## ISSUE-016：心率/血氧测量期间 OLED 花屏（UI 并发绘制导致帧缓冲竞争）
+
+**发现日期**：2026-02-17
+
+**原因**：
+`ui_manager` 中存在两个并发执行上下文会操作 OLED：
+1. FreeRTOS 软件定时器回调（`refresh_timer_callback`、`step_refresh_timer_callback`，Timer Service 任务）
+2. 按键任务回调触发的 UI 操作（`ui_switch_page`、`ui_enter_manual_measure`、`ui_exit_manual_measure`）
+
+在心率/血氧测量期间，手动测量页面每 500ms 刷新一次，和按键触发的页面切换/退出可能交错执行。由于 `ui_manager` 没有互斥保护，`sh1106` 缓冲区可能在同一时刻被不同路径修改，导致画面出现花屏。
+
+**后果**：
+- 手动测量阶段 OLED 偶发花屏、字符错位或残影
+- 页面切换与倒计时更新偶发互相覆盖
+
+**解决方案**：
+在 `ui_manager.c` 增加 `s_ui_mutex` 并将所有 UI 绘制路径串行化：
+1. 定时器回调使用 `ui_lock(0)` 非阻塞获取锁，拿不到锁则跳过本次刷新
+2. `ui_switch_page/ui_next_page/ui_enter_manual_measure/ui_exit_manual_measure/ui_update` 统一加锁
+3. 增加内部 `_locked` 版本函数，避免锁内再次调用公共接口造成死锁
+4. 手动测量超时自动退出改为调用 `ui_exit_manual_measure_locked()`
+
+**涉及文件**：
+- `components/ui_manager/ui_manager.c`

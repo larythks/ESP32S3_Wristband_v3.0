@@ -71,6 +71,24 @@ void sh1106_draw_char(int16_t x, int16_t y, char c, uint8_t color);
 void sh1106_draw_string(int16_t x, int16_t y, const char *str, uint8_t color);
 
 /**
+ * @brief 绘制 16x24 大号字符串（支持 0-9 和 ':'）
+ * @param x X坐标
+ * @param y Y坐标
+ * @param str 字符串
+ * @param color 颜色
+ */
+void sh1106_draw_string_large(int16_t x, int16_t y, const char *str, uint8_t color);
+
+/**
+ * @brief 绘制 12x12 中文字符
+ * @param x X坐标
+ * @param y Y坐标
+ * @param index 字模索引（0-8: 星/期/一/二/三/四/五/六/日）
+ * @param color 颜色
+ */
+void sh1106_draw_chinese(int16_t x, int16_t y, uint8_t index, uint8_t color);
+
+/**
  * @brief 设置显示开关
  * @param on true=开启, false=关闭
  */

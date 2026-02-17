@@ -5,6 +5,8 @@
 
 #include "sh1106.h"
 #include "font.h"
+#include "font_large.h"
+#include "font_cn.h"
 #include "i2c_bus.h"
 #include "esp_log.h"
 #include <string.h>
@@ -30,6 +32,9 @@ static uint8_t s_buffer[SH1106_WIDTH * SH1106_PAGES];
 #define SH1106_CMD_SET_PAGE_ADDR        0xB0
 #define SH1106_CMD_SET_LOW_COLUMN       0x00
 #define SH1106_CMD_SET_HIGH_COLUMN      0x10
+
+static void sh1106_draw_filled_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t color);
+static void sh1106_draw_large_char(int16_t x, int16_t y, char c, uint8_t color);
 
 // 写命令
 static esp_err_t sh1106_write_cmd(uint8_t cmd)
@@ -151,6 +156,15 @@ void sh1106_draw_pixel(int16_t x, int16_t y, uint8_t color)
     }
 }
 
+static void sh1106_draw_filled_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t color)
+{
+    for (int16_t yy = y; yy < y + h; yy++) {
+        for (int16_t xx = x; xx < x + w; xx++) {
+            sh1106_draw_pixel(xx, yy, color);
+        }
+    }
+}
+
 void sh1106_draw_char(int16_t x, int16_t y, char c, uint8_t color)
 {
     if (c < 32 || c > 126) {
@@ -179,6 +193,58 @@ void sh1106_draw_string(int16_t x, int16_t y, const char *str, uint8_t color)
         sh1106_draw_char(x, y, *str, color);
         x += 6;  // 5像素宽 + 1像素间距
         str++;
+    }
+}
+
+static void sh1106_draw_large_char(int16_t x, int16_t y, char c, uint8_t color)
+{
+    // 先清空字符区域，避免局部更新残影
+    sh1106_draw_filled_rect(x, y, FONT_LARGE_WIDTH, FONT_LARGE_HEIGHT, !color);
+
+    if (c == ':') {
+        sh1106_draw_filled_rect(x + 6, y + 7, 3, 3, color);
+        sh1106_draw_filled_rect(x + 6, y + 15, 3, 3, color);
+        return;
+    }
+
+    if (c < '0' || c > '9') {
+        return;
+    }
+
+    uint8_t seg = font_large_digit_segments[c - '0'];
+
+    if (seg & LARGE_SEG_A) sh1106_draw_filled_rect(x + 2, y + 0, 12, 3, color);
+    if (seg & LARGE_SEG_B) sh1106_draw_filled_rect(x + 13, y + 2, 3, 9, color);
+    if (seg & LARGE_SEG_C) sh1106_draw_filled_rect(x + 13, y + 13, 3, 9, color);
+    if (seg & LARGE_SEG_D) sh1106_draw_filled_rect(x + 2, y + 21, 12, 3, color);
+    if (seg & LARGE_SEG_E) sh1106_draw_filled_rect(x + 0, y + 13, 3, 9, color);
+    if (seg & LARGE_SEG_F) sh1106_draw_filled_rect(x + 0, y + 2, 3, 9, color);
+    if (seg & LARGE_SEG_G) sh1106_draw_filled_rect(x + 2, y + 10, 12, 3, color);
+}
+
+void sh1106_draw_string_large(int16_t x, int16_t y, const char *str, uint8_t color)
+{
+    while (*str) {
+        sh1106_draw_large_char(x, y, *str, color);
+        x += FONT_LARGE_WIDTH + FONT_LARGE_CHAR_SPACING;
+        str++;
+    }
+}
+
+void sh1106_draw_chinese(int16_t x, int16_t y, uint8_t index, uint8_t color)
+{
+    if (index >= FONT_CN_COUNT) {
+        return;
+    }
+
+    for (uint8_t row = 0; row < FONT_CN_HEIGHT; row++) {
+        uint16_t bits = font_cn_12x12[index][row];
+        for (uint8_t col = 0; col < FONT_CN_WIDTH; col++) {
+            bool on = (bits & (1U << (FONT_CN_WIDTH - 1 - col))) != 0;
+            sh1106_draw_pixel(x + col, y + row, on ? color : !color);
+        }
+        // 清除字符间距，避免残影
+        sh1106_draw_pixel(x + FONT_CN_WIDTH, y + row, !color);
     }
 }
 

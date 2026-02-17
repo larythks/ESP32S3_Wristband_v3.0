@@ -64,6 +64,7 @@ void i2c_bus_scan(void)
             if (addr == 0x69) name = "MPU6050";
             else if (addr == 0x57) name = "MAX30102";
             else if (addr == 0x3C) name = "SH1106";
+            else if (addr == 0x68) name = "DS3231";
 
             ESP_LOGI(TAG, "I2C device found at 0x%02X (%s)", addr, name);
             device_count++;

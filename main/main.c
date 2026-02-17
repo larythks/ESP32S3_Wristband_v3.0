@@ -7,6 +7,7 @@
 #include "sh1106.h"
 #include "max30102.h"
 #include "ds18b20.h"
+#include "ds3231.h"
 #include "button.h"
 #include "ui_manager.h"
 #include "event_bus.h"
@@ -145,6 +146,22 @@ void app_main(void)
     ret = ds18b20_init(DS18B20_DEFAULT_PIN);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DS18B20 init failed!");
+    }
+
+    // 初始化 DS3231 RTC
+    ret = ds3231_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DS3231 init failed!");
+    } else {
+        ds3231_time_t rtc_time = {0};
+        if (ds3231_get_time(&rtc_time) == ESP_OK) {
+            ESP_LOGI(TAG, "RTC time: %04u-%02u-%02u %02u:%02u:%02u (DOW=%u)",
+                     rtc_time.year, rtc_time.month, rtc_time.day,
+                     rtc_time.hour, rtc_time.minute, rtc_time.second,
+                     rtc_time.day_of_week);
+        } else {
+            ESP_LOGW(TAG, "RTC read failed after init");
+        }
     }
 
     // 初始化按键驱动
