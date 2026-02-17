@@ -223,9 +223,12 @@ static void sensor_task(void *arg)
 
         // 心率测量窗口状态机
         switch (s_ctx.hr_measure_state) {
-            case HR_MEASURE_IDLE:
-                // 检查是否到2分钟自动触发时间
-                if ((now - s_ctx.hr_last_auto_trigger) >= SENSOR_HR_AUTO_INTERVAL_MS) {
+            case HR_MEASURE_IDLE: {
+                // 根据模式选择间隔：实时模式 1秒，正常模式 120秒
+                uint32_t hr_interval = (s_ctx.hr_mode == SAMPLING_MODE_REALTIME)
+                                       ? SENSOR_REALTIME_INTERVAL
+                                       : SENSOR_HR_AUTO_INTERVAL_MS;
+                if ((now - s_ctx.hr_last_auto_trigger) >= hr_interval) {
                     ESP_LOGI(TAG, "Auto trigger HR measure window");
                     max30102_wakeup();
                     s_ctx.hr_measure_state = HR_MEASURE_MEASURING;
@@ -234,6 +237,7 @@ static void sensor_task(void *arg)
                 }
                 // IDLE 状态不读取 PPG FIFO（节省功耗）
                 break;
+            }
 
             case HR_MEASURE_MEASURING:
                 // 持续读取 FIFO，防止溢出
@@ -252,6 +256,7 @@ static void sensor_task(void *arg)
                 xSemaphoreGive(s_ctx.mutex);
                 max30102_shutdown();
                 s_ctx.hr_measure_state = HR_MEASURE_IDLE;
+                s_ctx.hr_last_auto_trigger = now;  // 从测量结束时开始计算下次间隔
                 ESP_LOGI(TAG, "HR sensor shutdown, back to IDLE");
                 break;
         }

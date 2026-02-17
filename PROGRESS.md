@@ -573,3 +573,28 @@
   - 本次优化为非功能性重构，不影响现有功能，仅改善代码结构和可维护性
 
 ---
+
+### 2026-02-17 - Bug 修复: 心率/血氧实时监测模式与持续越阈报警
+
+- **迭代**: Bug 修复（影响迭代 2.1 sensor_service、迭代 2.2 health_monitor）
+- **状态**: ✅ 已完成
+- **问题描述**: 心率/血氧实时监测模式存在 3 个关键缺陷：hr_mode 设置后未在采样逻辑中使用、实时模式在报警确认后才触发而非首次异常时、正常化后没有退出实时模式的机制
+- **修改文件**:
+  - components/services/sensor_service/sensor_service.c（HR_MEASURE_IDLE 动态间隔、HR_MEASURE_COMPLETE 更新时间戳）
+  - components/services/health_monitor/include/health_monitor.h（删除时间阈值宏，新增计数阈值宏 HR_ALARM_COUNT/SPO2_ALARM_COUNT）
+  - components/services/health_monitor/health_monitor.c（alert_context_t 改为计数器、计数制告警检查、首次异常触发实时模式、正常化退出实时模式、health_reset_alert 更新）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] 编译通过，无错误
+  - [ ] 正常模式下心率仍然 120 秒自动触发一次
+  - [ ] 检测到异常 HR 后，测量间隔缩短为 ~16 秒
+  - [ ] 连续 2 次异常测量后触发报警
+  - [ ] HR 恢复正常后自动退回 120 秒间隔
+  - [ ] SpO2 异常同样触发实时模式
+  - [ ] HR 和 SpO2 中任一指标仍异常时保持实时模式
+- **备注**:
+  - ISSUE-013: hr_mode 设置但未使用
+  - ISSUE-014: 实时模式触发时机错误
+  - ISSUE-015: 缺少实时模式退出机制
+
+---

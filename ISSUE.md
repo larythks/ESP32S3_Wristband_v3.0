@@ -253,3 +253,119 @@ case ALARM_STATE_ALARMING:
 ```
 
 **涉及文件**：`components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-013：心率/血氧 hr_mode 被设置但从未在采样逻辑中使用
+
+**发现日期**：2026-02-17
+
+**原因**：
+`sensor_service.c` 中 `sensor_set_mode(SENSOR_HR_SPO2, SAMPLING_MODE_REALTIME)` 正确地将 `s_ctx.hr_mode` 设置为 `SAMPLING_MODE_REALTIME`，但 `HR_MEASURE_IDLE` 状态中的自动触发间隔硬编码为 `SENSOR_HR_AUTO_INTERVAL_MS`（120 秒），完全忽略了 `hr_mode` 的值。此外 `HR_MEASURE_COMPLETE` 状态中 `hr_last_auto_trigger` 仅在 IDLE 触发时设置（测量开始时），导致实时模式下测量完成后立刻再次触发（`now - 15秒前 >= 1秒` 立刻成立）。
+
+**后果**：
+- 心率/血氧的实时监测模式形同虚设，即使 `hr_mode == SAMPLING_MODE_REALTIME`，采样间隔仍为 120 秒
+- 异常检测后无法加速采样进行持续越阈确认
+- 与温度传感器的实时模式行为不一致（温度已正确实现动态间隔）
+
+**解决方案**：
+1. 在 `HR_MEASURE_IDLE` 中根据 `s_ctx.hr_mode` 动态选择间隔：实时模式 1 秒，正常模式 120 秒
+2. 在 `HR_MEASURE_COMPLETE` 中更新 `hr_last_auto_trigger = now`，确保间隔从测量结束时开始计算
+
+```c
+case HR_MEASURE_IDLE: {
+    uint32_t hr_interval = (s_ctx.hr_mode == SAMPLING_MODE_REALTIME)
+                           ? SENSOR_REALTIME_INTERVAL
+                           : SENSOR_HR_AUTO_INTERVAL_MS;
+    if ((now - s_ctx.hr_last_auto_trigger) >= hr_interval) { ... }
+    break;
+}
+case HR_MEASURE_COMPLETE:
+    ...
+    s_ctx.hr_last_auto_trigger = now;  // 从测量结束时开始计算
+    break;
+```
+
+**涉及文件**：`components/services/sensor_service/sensor_service.c`
+
+---
+
+## ISSUE-014：心率/血氧实时模式在报警确认后才触发，而非首次异常时
+
+**发现日期**：2026-02-17
+
+**原因**：
+`health_monitor.c` 中 `publish_health_alert()` 函数内调用 `sensor_set_mode(SENSOR_HR_SPO2, SAMPLING_MODE_REALTIME)`，但 `publish_health_alert()` 仅在报警级别达到 `ALERT_LEVEL_ALARM` 后才被调用。对于心率，这要求持续越阈 30 秒（`HR_ALARM_DURATION_MS`）后才触发实时模式。设计意图是首次异常时立刻进入实时模式进行高频采样确认。
+
+**后果**：
+- 首次检测到心率/血氧异常时，仍以 120 秒间隔采样，无法快速进行持续越阈确认
+- 在正常模式下等待 30 秒持续越阈本身就需要多个 120 秒周期，逻辑上自相矛盾
+- 与温度传感器的行为不一致（温度在 sensor_service 内首次异常即切换实时模式）
+
+**解决方案**：
+将告警判定从时间制改为计数制：
+- 首次异常立刻进入实时模式 + `alert_count = 1`
+- 连续 2 次异常测量后触发报警（`HR_ALARM_COUNT = 2`，`SPO2_ALARM_COUNT = 2`）
+- 删除 `HR_ALARM_DURATION_MS` 和 `SPO2_ALARM_DURATION_MS` 宏
+
+**涉及文件**：
+- `components/services/health_monitor/include/health_monitor.h`
+- `components/services/health_monitor/health_monitor.c`
+
+---
+
+## ISSUE-015：心率/血氧正常化后没有退出实时模式的机制
+
+**发现日期**：2026-02-17
+
+**原因**：
+`health_monitor.c` 的 `check_alerts()` 中，当心率/血氧恢复正常时仅将 `hr_in_alert`/`spo2_in_alert` 置 false，但没有调用 `sensor_set_mode(SENSOR_HR_SPO2, SAMPLING_MODE_NORMAL)` 退出实时模式。一旦进入实时模式，即使指标恢复正常，传感器仍以 ~16 秒周期持续高频采样。
+
+**后果**：
+- 异常恢复后传感器永远停留在实时采样模式，无法回到正常的 120 秒间隔
+- 不必要的高频采样浪费功耗
+- 与温度传感器行为不一致（温度恢复正常后自动退出实时模式）
+
+**解决方案**：
+在 `check_alerts()` 末尾添加实时模式退出逻辑。因心率和血氧共享 MAX30102 传感器，需两者都恢复正常后才退出：
+
+```c
+if (!s_ctx.alert.hr_in_alert && !s_ctx.alert.spo2_in_alert) {
+    if (sensor_get_mode(SENSOR_HR_SPO2) == SAMPLING_MODE_REALTIME) {
+        sensor_set_mode(SENSOR_HR_SPO2, SAMPLING_MODE_NORMAL);
+        ESP_LOGI(TAG, "HR/SpO2 normalized, exit realtime mode");
+    }
+}
+```
+
+**涉及文件**：`components/services/health_monitor/health_monitor.c`
+
+---
+
+## ISSUE-016：心率/血氧告警计数在每次事件回调时递增而非每次测量时递增
+
+**发现日期**：2026-02-17
+
+**原因**：
+`health_monitor.c` 的 `check_alerts()` 在每次 `on_sensor_data()` 事件回调中被调用（每 100ms 一次），但心率/血氧值在两次测量窗口之间不会变化。计数制告警的 `hr_alert_count`/`spo2_alert_count` 在每次 `check_alerts()` 调用时都会递增，导致首次异常后 100ms 内计数就从 1 增到 2，立刻触发报警，无法实现"连续 2 次独立测量异常后才报警"的设计意图。
+
+**后果**：
+- 首次检测到异常值后约 100ms 即触发报警，与正常模式下的时间制行为无实质区别
+- 实时模式的高频复测确认机制完全失效
+- 用户单次偶发异常值即会触发报警，误报率高
+
+**解决方案**：
+在 `health_monitor_ctx_t` 中新增 `bool ppg_result_fresh` 标志，仅在测量窗口结束、新的 HR/SpO2 计算完成时设置为 `true`。`check_alerts()` 中 HR/SpO2 的计数逻辑仅在 `ppg_result_fresh == true` 时执行，执行后清除标志：
+
+```c
+// 测量窗口结束时
+s_ctx.ppg_result_fresh = true;
+
+// check_alerts() 中
+if (s_ctx.ppg_result_fresh) {
+    s_ctx.ppg_result_fresh = false;
+    // HR/SpO2 告警计数逻辑...
+}
+```
+
+**涉及文件**：`components/services/health_monitor/health_monitor.c`
