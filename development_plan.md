@@ -65,6 +65,14 @@
 | 对外接口 | `esp_err_t ds18b20_init(gpio_num_t pin)`<br>`esp_err_t ds18b20_read_temp(float *temp_c)` |
 | 依赖 | driver/gpio |
 
+#### components/drivers/ds3231
+| 项目 | 内容 |
+|-----|------|
+| 职责 | I2C 通信、DS3231 RTC 时间/日期读写、BCD 编解码 |
+| 不做 | 闹钟功能、温度补偿读取、32KHz 输出配置 |
+| 对外接口 | `esp_err_t ds3231_init(void)`<br>`esp_err_t ds3231_get_time(ds3231_time_t *time)`<br>`esp_err_t ds3231_set_time(const ds3231_time_t *time)` |
+| 依赖 | driver/i2c |
+
 #### components/drivers/max30102
 | 项目 | 内容 |
 |-----|------|
@@ -84,9 +92,10 @@
 #### components/drivers/sh1106
 | 项目 | 内容 |
 |-----|------|
-| 职责 | I2C 通信、OLED 初始化、帧缓冲写入、基础绘图 |
+| 职责 | I2C 通信、OLED 初始化、帧缓冲写入、基础绘图、多字号字体渲染 |
 | 不做 | 复杂 UI 组件、动画 |
-| 对外接口 | `esp_err_t sh1106_init(void)`<br>`void sh1106_clear(void)`<br>`void sh1106_draw_string(int x, int y, const char *str)`<br>`void sh1106_update(void)` |
+| 对外接口 | `esp_err_t sh1106_init(void)`<br>`void sh1106_clear(void)`<br>`void sh1106_draw_string(int x, int y, const char *str, uint8_t color)`<br>`void sh1106_draw_string_large(int x, int y, const char *str, uint8_t color)`<br>`void sh1106_draw_chinese(int x, int y, uint8_t index, uint8_t color)`<br>`void sh1106_update(void)` |
+| 字体支持 | 5x7 ASCII 小字体（已有）；16x24 大数字字体（0-9 及冒号，用于时间显示）；12x12 中文字模（仅"星期一二三四五六日"9 个汉字） |
 | 依赖 | driver/i2c |
 
 #### components/drivers/audio
@@ -180,10 +189,26 @@
 #### components/ui_manager
 | 项目 | 内容 |
 |-----|------|
-| 职责 | UI 页面状态管理、页面切换、数据渲染（步数每 500ms 刷新，心率/血氧每 2 分钟刷新） |
+| 职责 | UI 页面状态管理、页面切换、数据渲染（步数每 500ms 刷新，心率/血氧每 2 分钟刷新）；Home 页从 DS3231 获取日期时间并显示 |
 | 不做 | 直接操作 OLED（通过 drivers 层） |
 | 对外接口 | `esp_err_t ui_manager_init(void)`<br>`void ui_switch_page(ui_page_t page)`<br>`void ui_update(void)` |
-| 依赖 | drivers/sh1106, services/event_bus |
+| 依赖 | drivers/sh1106, drivers/ds3231, services/event_bus |
+
+**Home 页面布局（128x64 OLED）**：
+```
++----------------------------+
+| 02/17 周六         36.5°C  |  ← 5x7 小字体，日期左对齐，温度右对齐
+|                            |
+|                            |
+|          12:30             |  ← 16x24 大数字字体，水平居中，垂直居中
+|                            |
+|                            |
+|                            |
++----------------------------+
+```
+- 第一行：日期（格式 MM/DD + 中文星期）+ 温度，均使用小字体
+- 中间区域：时间 HH:MM，使用大数字字体，垂直水平居中
+- 心率、血氧、步数在各自独立页面（Heart Rate 页、Steps 页）通过 SW2 切换查看
 
 ### 2.2 Flutter App 模块
 
@@ -357,7 +382,8 @@ Week 1: 基础驱动层
 ├─ 迭代1.1: 项目结构搭建 + I2C 总线验证
 ├─ 迭代1.2: MPU6050 驱动 + OLED 驱动
 ├─ 迭代1.3: MAX30102 驱动 + DS18B20 驱动
-└─ 迭代1.4: 按键驱动 + 基础 UI 框架
+├─ 迭代1.4: 按键驱动 + 基础 UI 框架
+└─ 迭代1.5: DS3231 RTC 驱动 + 大字体扩展 + Home 页面重设计
 
 Week 2: 服务层 + BLE + 安全 + 最小闭环
 ├─ 迭代2.1: 事件总线 + 传感器采样服务
@@ -410,6 +436,7 @@ Week 4: Flutter App + 云端 + 联调
 I2C device found at 0x69 (MPU6050)
 I2C device found at 0x57 (MAX30102)
 I2C device found at 0x3C (SH1106)
+I2C device found at 0x68 (DS3231)
 ```
 
 **回滚策略**: 删除 components 目录，恢复原始 main.c
@@ -417,8 +444,8 @@ I2C device found at 0x3C (SH1106)
 **用户验证清单**:
 - [ ] 编译无错误
 - [ ] 烧录成功
-- [ ] 串口看到 3 个 I2C 设备地址
-- [ ] 地址与预期一致 (0x69, 0x57, 0x3C)
+- [ ] 串口看到 4 个 I2C 设备地址
+- [ ] 地址与预期一致 (0x69, 0x57, 0x3C, 0x68)
 
 ---
 
@@ -525,6 +552,62 @@ I2C device found at 0x3C (SH1106)
 - [ ] SW2 再次长按可中断手动测量
 - [ ] SW1 按下有响应
 - [ ] 无按键抖动误触发
+
+---
+
+#### 迭代 1.5: DS3231 RTC 驱动 + 大字体扩展 + Home 页面重设计
+
+**目标**: DS3231 能读取日期时间，OLED 支持大字体和中文星期显示，Home 页面展示日期、时间、温度
+
+**变更范围**:
+- 新建 `components/drivers/ds3231/`
+- 修改 `components/drivers/sh1106/`（添加大字体和中文字模）
+- 修改 `components/ui_manager/`（Home 页面布局重设计）
+
+**步骤**:
+1. 实现 DS3231 I2C 初始化，读取设备验证通信正常
+2. 实现 DS3231 时间/日期读取（BCD 解码）和设置功能
+3. 在 SH1106 驱动中新增 16x24 大数字字体（0-9 及冒号 `:`，共 11 个字符）
+4. 在 SH1106 驱动中新增 12x12 中文字模（仅"星期一二三四五六日"9 个汉字）
+5. 新增 `sh1106_draw_string_large()` 和 `sh1106_draw_chinese()` 绘图函数
+6. 重设计 Home 页面布局：第一行小字体显示日期（MM/DD 周X）和温度，中间大字体显示时间（HH:MM）
+
+**Home 页面布局**:
+```
++----------------------------+  128x64 OLED
+| 02/17 周六         36.5°C  |  ← 5x7 小字体 (y=0)
+|                            |
+|                            |
+|          12:30             |  ← 16x24 大数字 (y=20, 居中)
+|                            |
+|                            |
+|                            |
++----------------------------+
+```
+
+**产出物**:
+- `components/drivers/ds3231/ds3231.h/.c`
+- `components/drivers/sh1106/font_large.h`（16x24 大数字字模）
+- `components/drivers/sh1106/font_cn.h`（12x12 中文星期字模）
+- 修改后的 `sh1106.h/.c`（新增大字体和中文绘图函数）
+- 修改后的 `ui_manager.c`（Home 页面布局）
+
+**验收方法**:
+- 串口打印 DS3231 读取的日期时间，格式正确
+- I2C 扫描新增 0x68 (DS3231)
+- Home 页面第一行显示日期（如 `02/17 周六`）和温度（如 `36.5°C`）
+- Home 页面中间区域以大字体显示时间（如 `12:30`）
+- 时间每分钟自动更新
+
+**回滚策略**: 删除 ds3231 component 目录，恢复 sh1106 和 ui_manager 原有代码
+
+**用户验证清单**:
+- [ ] DS3231 I2C 通信正常（0x68 地址可扫描到）
+- [ ] 日期时间读取正确
+- [ ] 大字体时间显示清晰
+- [ ] 中文星期显示正确
+- [ ] 温度显示正确
+- [ ] Home 页面布局符合设计
 
 ---
 
@@ -994,6 +1077,7 @@ ESP32S3_Wristband_v3.0/
 │   ├── drivers/
 │   │   ├── common/          # I2C 总线封装
 │   │   ├── ds18b20/         # 体温传感器
+│   │   ├── ds3231/          # RTC时钟模块
 │   │   ├── max30102/        # 心率血氧
 │   │   ├── mpu6050/         # 6轴IMU
 │   │   ├── sh1106/          # OLED显示
@@ -1047,7 +1131,7 @@ mobile_flutter/
 ### 8.2 硬件检查点
 - ESP32-S3 开发板正常工作
 - 所有传感器已焊接/连接
-- I2C 设备地址确认（0x69, 0x57, 0x3C）
+- I2C 设备地址确认（0x69, 0x57, 0x3C, 0x68）
 - 按键和 LED 连接正确
 
 ### 8.3 sdkconfig 关键配置确认
@@ -1110,6 +1194,7 @@ storage,  data, spiffs,  0x610000, 0x400000,
 | MPU6050 | I2C | SDA=GPIO8, SCL=GPIO9, INT=GPIO1 | 6轴IMU |
 | MAX30102 | I2C | SDA=GPIO8, SCL=GPIO9, INT=GPIO2 | 心率血氧 |
 | SH1106 OLED | I2C | SDA=GPIO8, SCL=GPIO9 | 128x64显示屏 |
+| DS3231 RTC | I2C | SDA=GPIO8, SCL=GPIO9 | RTC 时钟模块，I2C地址 0x68 |
 | SW1(报警键) | GPIO | GPIO7 | 低电平有效 |
 | SW2(交互键) | GPIO | GPIO6 | 低电平有效 |
 | WS2812 RGB | GPIO | GPIO48 | 报警指示灯 |
