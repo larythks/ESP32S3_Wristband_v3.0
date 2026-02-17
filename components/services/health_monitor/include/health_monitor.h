@@ -36,8 +36,8 @@ extern "C" {
 
 // 连续触发次数
 #define TEMP_ALARM_COUNT        3       // 体温连续越阈次数
-#define HR_ALARM_DURATION_MS    30000   // 心率持续越阈时间 (30秒)
-#define SPO2_ALARM_DURATION_MS  20000   // 血氧持续越阈时间 (20秒)
+#define HR_ALARM_COUNT          2       // 心率连续越阈次数
+#define SPO2_ALARM_COUNT        2       // 血氧连续越阈次数
 
 // ============== 数据结构 ==============
 // 注意: alert_level_t, alert_type_t, health_alert_t 已在 event_bus.h 中定义

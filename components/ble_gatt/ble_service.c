@@ -7,6 +7,7 @@
 #include "ble_security.h"
 #include "ble_gatt_defs.h"
 #include "event_bus.h"
+#include "ds3231.h"
 
 #include "sensor_service.h"
 #include "health_monitor.h"
@@ -209,6 +210,54 @@ static int gatt_chr_access_command(uint16_t conn_handle, uint16_t attr_handle,
         s_time_offset = (int64_t)cmd->timestamp - local_sec;
         ESP_LOGI(TAG, "SYNC_TIME: unix=%lu, offset=%lld",
                  (unsigned long)cmd->timestamp, (long long)s_time_offset);
+
+        /* 将 Unix 时间戳写入 DS3231 RTC */
+        {
+            uint32_t ts = cmd->timestamp + 8 * 3600;  /* UTC+8 北京时间 */
+            uint32_t days = ts / 86400;
+            uint32_t daytime = ts % 86400;
+            uint8_t hour = daytime / 3600;
+            uint8_t minute = (daytime % 3600) / 60;
+            uint8_t second = daytime % 60;
+
+            /* 从 1970-01-01 起算日期 */
+            uint16_t year = 1970;
+            while (1) {
+                uint16_t yday = ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) ? 366 : 365;
+                if (days < yday) break;
+                days -= yday;
+                year++;
+            }
+            static const uint16_t mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+            uint8_t month = 0;
+            for (month = 0; month < 12; month++) {
+                uint16_t md = mdays[month] + ((month == 1 && leap) ? 1 : 0);
+                if (days < md) break;
+                days -= md;
+            }
+
+            ds3231_time_t rtc_time = {
+                .year   = year,
+                .month  = month + 1,
+                .day    = (uint8_t)(days + 1),
+                .hour   = hour,
+                .minute = minute,
+                .second = second,
+            };
+            /* 1970-01-01 是星期四(4), DS3231 day_of_week: 1=周一 ... 7=周日 */
+            uint32_t total_days = ts / 86400;
+            uint8_t dow = (uint8_t)((total_days + 3) % 7 + 1);  /* +3: 周四偏移 */
+            rtc_time.day_of_week = dow;
+            esp_err_t ret = ds3231_set_time(&rtc_time);
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "DS3231 synced: %04d-%02d-%02d %02d:%02d:%02d",
+                         rtc_time.year, rtc_time.month, rtc_time.day,
+                         rtc_time.hour, rtc_time.minute, rtc_time.second);
+            } else {
+                ESP_LOGW(TAG, "DS3231 set_time failed: %s", esp_err_to_name(ret));
+            }
+        }
         return 0;
     }
 
@@ -350,13 +399,12 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_connected = true;
             s_conn_handle = event->connect.conn_handle;
-            ESP_LOGI(TAG, "Connected, handle=%d", s_conn_handle);
 
-            // /* 主动发起安全请求（触发配对/加密） */
-            // int sec_rc = ble_gap_security_initiate(s_conn_handle);
-            // if (sec_rc != 0) {
-            //     ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
-            // }
+            /* 主动发起安全请求（触发配对/加密） */
+            int sec_rc = ble_gap_security_initiate(s_conn_handle);
+            if (sec_rc != 0) {
+                ESP_LOGW(TAG, "Security initiate failed, rc=%d", sec_rc);
+            }
 
             /* 发布 BLE 连接事件到事件总线 */
             event_data_t evt_data;
@@ -372,7 +420,8 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "Disconnected, reason=%d",
+        ESP_LOGW(TAG, "Disconnected, reason=%d (0x%02X)",
+                 event->disconnect.reason,
                  event->disconnect.reason);
         s_connected = false;
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -390,20 +439,21 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        ESP_LOGI(TAG, "Advertising complete");
+        ESP_LOGD(TAG, "Advertising complete");
         /* 广播超时后重新广播 */
         ble_start_advertise();
         break;
 
     case BLE_GAP_EVENT_MTU:
-        ESP_LOGI(TAG, "MTU updated: conn_handle=%d, mtu=%d",
+        ESP_LOGD(TAG, "MTU updated: conn_handle=%d, mtu=%d",
                  event->mtu.conn_handle, event->mtu.value);
         break;
 
     case BLE_GAP_EVENT_SUBSCRIBE:
-        ESP_LOGI(TAG, "Subscribe event: handle=%d, cur_notify=%d",
+        ESP_LOGD(TAG, "Subscribe event: handle=%d, cur_notify=%d, cur_indicate=%d",
                  event->subscribe.attr_handle,
-                 event->subscribe.cur_notify);
+                 event->subscribe.cur_notify,
+                 event->subscribe.cur_indicate);
         break;
 
     /* 安全相关事件转发到 ble_security 模块 */
@@ -524,7 +574,7 @@ static esp_err_t send_telemetry_now(void)
     /* 发送 Notify */
     ret = ble_notify_telemetry(&pkt);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu ts=%lu",
+        ESP_LOGD(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu ts=%lu",
                  pkt.temp, pkt.heart_rate, pkt.spo2,
                  (unsigned long)pkt.steps, (unsigned long)pkt.timestamp);
     } else {
@@ -628,54 +678,42 @@ esp_err_t ble_service_init(void)
     return ESP_OK;
 }
 
-esp_err_t ble_notify_telemetry(const ble_telemetry_t *data)
+/**
+ * @brief 通用 BLE Notify 发送辅助函数
+ */
+static esp_err_t ble_notify_raw(uint16_t attr_handle,
+                                const void *data, size_t len,
+                                const char *name)
 {
     if (data == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-
     if (!s_connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
         return ESP_ERR_INVALID_STATE;
     }
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, sizeof(ble_telemetry_t));
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
     if (om == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate mbuf for telemetry");
+        ESP_LOGE(TAG, "Failed to allocate mbuf for %s", name);
         return ESP_ERR_NO_MEM;
     }
-
-    int rc = ble_gatts_notify_custom(s_conn_handle, s_telemetry_val_handle, om);
+    int rc = ble_gatts_notify_custom(s_conn_handle, attr_handle, om);
     if (rc != 0) {
-        ESP_LOGW(TAG, "Telemetry notify failed, rc=%d", rc);
+        ESP_LOGW(TAG, "%s notify failed, rc=%d", name, rc);
         return ESP_FAIL;
     }
-
     return ESP_OK;
+}
+
+esp_err_t ble_notify_telemetry(const ble_telemetry_t *data)
+{
+    return ble_notify_raw(s_telemetry_val_handle,
+                          data, sizeof(ble_telemetry_t), "telemetry");
 }
 
 esp_err_t ble_notify_alarm(const ble_alarm_t *data)
 {
-    if (data == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    if (!s_connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, sizeof(ble_alarm_t));
-    if (om == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate mbuf for alarm");
-        return ESP_ERR_NO_MEM;
-    }
-
-    int rc = ble_gatts_notify_custom(s_conn_handle, s_alarm_val_handle, om);
-    if (rc != 0) {
-        ESP_LOGW(TAG, "Alarm notify failed, rc=%d", rc);
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
+    return ble_notify_raw(s_alarm_val_handle,
+                          data, sizeof(ble_alarm_t), "alarm");
 }
 
 bool ble_is_connected(void)

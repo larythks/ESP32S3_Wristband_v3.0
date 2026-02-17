@@ -1,7 +1,0 @@
-已注释ble_service.c中的Health alert警告（537行）
-已注释sensor_service.c中的HR mode信息（416行）
-
-I (8260) ble_svc: Connection established, status=0
-I (8260) ble_svc: Connected, handle=1
-I (8260) main: BLE: Client connected
-I (9000) ble_svc: Subscribe event: handle=18, cur_notify=1

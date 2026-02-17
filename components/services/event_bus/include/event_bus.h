@@ -7,12 +7,21 @@
 #define EVENT_BUS_H
 
 #include "esp_err.h"
+#include "esp_timer.h"
 #include <stdint.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief 获取系统时间戳 (ms)
+ */
+static inline uint32_t get_timestamp_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
 
 // 最大订阅者数量
 #define EVENT_BUS_MAX_SUBSCRIBERS   8
@@ -103,7 +112,9 @@ typedef enum {
     ALERT_TYPE_HR_LOW,          // 心率过低
     ALERT_TYPE_SPO2_LOW,        // 血氧过低
     ALERT_TYPE_SPO2_WARNING,    // 血氧预警
-    ALERT_TYPE_FALL             // 跌倒
+    ALERT_TYPE_FALL,            // 跌倒
+    ALERT_TYPE_MANUAL,          // 手动报警 (SW1)
+    ALERT_TYPE_CALL_FAMILY      // 呼叫家属
 } alert_type_t;
 
 /**

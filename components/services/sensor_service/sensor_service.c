@@ -63,14 +63,6 @@ typedef struct {
 static sensor_service_ctx_t s_ctx = {0};
 
 /**
- * @brief 获取当前时间戳 (ms)
- */
-static uint32_t get_timestamp_ms(void)
-{
-    return (uint32_t)(esp_timer_get_time() / 1000);
-}
-
-/**
  * @brief 异步采样温度传感器 - 启动转换
  * @return true 如果成功启动转换
  */
@@ -231,9 +223,12 @@ static void sensor_task(void *arg)
 
         // 心率测量窗口状态机
         switch (s_ctx.hr_measure_state) {
-            case HR_MEASURE_IDLE:
-                // 检查是否到2分钟自动触发时间
-                if ((now - s_ctx.hr_last_auto_trigger) >= SENSOR_HR_AUTO_INTERVAL_MS) {
+            case HR_MEASURE_IDLE: {
+                // 根据模式选择间隔：实时模式 1秒，正常模式 120秒
+                uint32_t hr_interval = (s_ctx.hr_mode == SAMPLING_MODE_REALTIME)
+                                       ? SENSOR_REALTIME_INTERVAL
+                                       : SENSOR_HR_AUTO_INTERVAL_MS;
+                if ((now - s_ctx.hr_last_auto_trigger) >= hr_interval) {
                     ESP_LOGI(TAG, "Auto trigger HR measure window");
                     max30102_wakeup();
                     s_ctx.hr_measure_state = HR_MEASURE_MEASURING;
@@ -242,6 +237,7 @@ static void sensor_task(void *arg)
                 }
                 // IDLE 状态不读取 PPG FIFO（节省功耗）
                 break;
+            }
 
             case HR_MEASURE_MEASURING:
                 // 持续读取 FIFO，防止溢出
@@ -260,6 +256,7 @@ static void sensor_task(void *arg)
                 xSemaphoreGive(s_ctx.mutex);
                 max30102_shutdown();
                 s_ctx.hr_measure_state = HR_MEASURE_IDLE;
+                s_ctx.hr_last_auto_trigger = now;  // 从测量结束时开始计算下次间隔
                 ESP_LOGI(TAG, "HR sensor shutdown, back to IDLE");
                 break;
         }
@@ -413,8 +410,8 @@ esp_err_t sensor_set_mode(uint8_t sensor_mask, sampling_mode_t mode)
 
     if (sensor_mask & SENSOR_HR_SPO2) {
         s_ctx.hr_mode = mode;
-        // ESP_LOGI(TAG, "HR mode: %s",
-        //          mode == SAMPLING_MODE_REALTIME ? "REALTIME" : "NORMAL");
+        ESP_LOGI(TAG, "HR mode: %s",
+                 mode == SAMPLING_MODE_REALTIME ? "REALTIME" : "NORMAL");
     }
 
     // 发布采样模式变更事件

@@ -70,8 +70,8 @@ typedef struct {
  * @brief 告警判定上下文
  */
 typedef struct {
-    uint32_t hr_alert_start;    // 心率告警开始时间
-    uint32_t spo2_alert_start;  // 血氧告警开始时间
+    uint8_t hr_alert_count;     // 心率连续异常计数
+    uint8_t spo2_alert_count;   // 血氧连续异常计数
     bool hr_in_alert;           // 心率处于告警状态
     bool spo2_in_alert;         // 血氧处于告警状态
 } alert_context_t;
@@ -90,6 +90,7 @@ typedef struct {
     // 测量窗口跟踪
     bool measuring_active;          // 当前是否在测量窗口内
     uint32_t measure_start_time;    // 窗口开始时间
+    bool ppg_result_fresh;          // 本次事件是否有新的 HR/SpO2 测量结果
 
     health_status_t status;
 } health_monitor_ctx_t;
@@ -103,6 +104,7 @@ static void process_ppg_data(uint32_t red, uint32_t ir, uint32_t timestamp);
 static void detect_peak(uint32_t ir_value, uint32_t timestamp);
 static void process_temp_data(float temp, uint32_t timestamp);
 static void check_alerts(uint32_t timestamp);
+static void calculate_ac_dc(void);
 static uint8_t calculate_heart_rate(void);
 static uint8_t calculate_spo2(void);
 static void publish_health_alert(alert_type_t type, alert_level_t level, int16_t value, uint32_t timestamp);
@@ -169,8 +171,8 @@ void health_reset_alert(void)
 {
     s_ctx.alert.hr_in_alert = false;
     s_ctx.alert.spo2_in_alert = false;
-    s_ctx.alert.hr_alert_start = 0;
-    s_ctx.alert.spo2_alert_start = 0;
+    s_ctx.alert.hr_alert_count = 0;
+    s_ctx.alert.spo2_alert_count = 0;
     s_ctx.status.alert_level = ALERT_LEVEL_NONE;
     s_ctx.status.alert_type = ALERT_TYPE_NONE;
     ESP_LOGI(TAG, "Alert state reset");
@@ -218,6 +220,9 @@ static void on_sensor_data(const event_t *event, void *user_data)
             ESP_LOGI(TAG, "HR measure window ended, finalizing results");
             s_ctx.measuring_active = false;
 
+            // 一次性计算 AC/DC 分量
+            calculate_ac_dc();
+
             // 最终计算心率和血氧
             uint8_t hr = calculate_heart_rate();
             uint8_t spo2 = calculate_spo2();
@@ -239,8 +244,8 @@ static void on_sensor_data(const event_t *event, void *user_data)
                 s_ctx.status.spo2_validity = MEASURE_INVALID_NO_SIGNAL;
                 ESP_LOGW(TAG, "Window SpO2: no valid result");
             }
+            s_ctx.ppg_result_fresh = true;  // 标记有新的测量结果
         }
-        // 窗口外不处理PPG数据，保持上次测量结果
     }
 
     // 更新状态时间戳
@@ -361,31 +366,42 @@ static void process_ppg_data(uint32_t red, uint32_t ir, uint32_t timestamp)
 
     // 峰值检测（用于心率计算）
     detect_peak(ir, timestamp);
+}
 
-    // 计算 AC/DC 分量（持续更新，供窗口结束时使用）
-    if (ppg->buffer_count >= PPG_BUFFER_SIZE / 2) {
-        uint32_t red_min = UINT32_MAX, red_max = 0;
-        uint32_t ir_min = UINT32_MAX, ir_max = 0;
-        uint64_t red_sum = 0, ir_sum = 0;
+// ============== AC/DC 分量计算 ==============
 
-        for (int i = 0; i < ppg->buffer_count; i++) {
-            uint32_t r = ppg->red_buffer[i];
-            uint32_t ir_val = ppg->ir_buffer[i];
+/**
+ * @brief 计算 PPG 缓冲区的 AC/DC 分量（窗口结束时调用一次）
+ */
+static void calculate_ac_dc(void)
+{
+    ppg_context_t *ppg = &s_ctx.ppg;
 
-            if (r < red_min) red_min = r;
-            if (r > red_max) red_max = r;
-            if (ir_val < ir_min) ir_min = ir_val;
-            if (ir_val > ir_max) ir_max = ir_val;
-
-            red_sum += r;
-            ir_sum += ir_val;
-        }
-
-        ppg->red_ac = red_max - red_min;
-        ppg->ir_ac = ir_max - ir_min;
-        ppg->red_dc = (uint32_t)(red_sum / ppg->buffer_count);
-        ppg->ir_dc = (uint32_t)(ir_sum / ppg->buffer_count);
+    if (ppg->buffer_count < PPG_BUFFER_SIZE / 2) {
+        return;
     }
+
+    uint32_t red_min = UINT32_MAX, red_max = 0;
+    uint32_t ir_min = UINT32_MAX, ir_max = 0;
+    uint64_t red_sum = 0, ir_sum = 0;
+
+    for (int i = 0; i < ppg->buffer_count; i++) {
+        uint32_t r = ppg->red_buffer[i];
+        uint32_t ir_val = ppg->ir_buffer[i];
+
+        if (r < red_min) red_min = r;
+        if (r > red_max) red_max = r;
+        if (ir_val < ir_min) ir_min = ir_val;
+        if (ir_val > ir_max) ir_max = ir_val;
+
+        red_sum += r;
+        ir_sum += ir_val;
+    }
+
+    ppg->red_ac = red_max - red_min;
+    ppg->ir_ac = ir_max - ir_min;
+    ppg->red_dc = (uint32_t)(red_sum / ppg->buffer_count);
+    ppg->ir_dc = (uint32_t)(ir_sum / ppg->buffer_count);
 }
 
 // ============== 心率计算 ==============
@@ -471,51 +487,86 @@ static void check_alerts(uint32_t timestamp)
         alert_value = (int16_t)(s_ctx.status.temperature * 10);
     }
 
-    // 2. 心率告警检查 (持续30秒)
-    if (s_ctx.status.hr_validity == MEASURE_VALID) {
-        uint8_t hr = s_ctx.status.heart_rate;
-        bool hr_abnormal = (hr >= HR_ALARM_HIGH || hr <= HR_ALARM_LOW);
+    // 2-3. 心率/血氧告警检查（仅在有新测量结果时递增计数）
+    if (s_ctx.ppg_result_fresh) {
+        s_ctx.ppg_result_fresh = false;
 
-        if (hr_abnormal) {
-            if (!s_ctx.alert.hr_in_alert) {
-                s_ctx.alert.hr_in_alert = true;
-                s_ctx.alert.hr_alert_start = timestamp;
-            } else if ((timestamp - s_ctx.alert.hr_alert_start) >= HR_ALARM_DURATION_MS) {
-                if (new_level < ALERT_LEVEL_ALARM) {
-                    new_alert = (hr >= HR_ALARM_HIGH) ? ALERT_TYPE_HR_HIGH : ALERT_TYPE_HR_LOW;
-                    new_level = ALERT_LEVEL_ALARM;
-                    alert_value = hr * 10;
+        // 2. 心率告警检查（连续 2 次异常测量）
+        if (s_ctx.status.hr_validity == MEASURE_VALID) {
+            uint8_t hr = s_ctx.status.heart_rate;
+            bool hr_abnormal = (hr >= HR_ALARM_HIGH || hr <= HR_ALARM_LOW);
+
+            if (hr_abnormal) {
+                if (!s_ctx.alert.hr_in_alert) {
+                    // 首次异常：进入告警状态，立刻切换到实时模式
+                    s_ctx.alert.hr_in_alert = true;
+                    s_ctx.alert.hr_alert_count = 1;
+                    sensor_set_mode(SENSOR_HR_SPO2, SAMPLING_MODE_REALTIME);
+                    ESP_LOGW(TAG, "HR abnormal (%d bpm), enter realtime mode", hr);
+                } else {
+                    // 后续异常：递增计数
+                    s_ctx.alert.hr_alert_count++;
+                    if (s_ctx.alert.hr_alert_count >= HR_ALARM_COUNT) {
+                        // 连续 2 次异常 → 触发报警
+                        if (new_level < ALERT_LEVEL_ALARM) {
+                            new_alert = (hr >= HR_ALARM_HIGH) ? ALERT_TYPE_HR_HIGH : ALERT_TYPE_HR_LOW;
+                            new_level = ALERT_LEVEL_ALARM;
+                            alert_value = hr * 10;
+                        }
+                    }
                 }
+            } else {
+                // 恢复正常：清除告警状态
+                s_ctx.alert.hr_in_alert = false;
+                s_ctx.alert.hr_alert_count = 0;
             }
-        } else {
-            s_ctx.alert.hr_in_alert = false;
         }
-    }
 
-    // 3. 血氧告警检查 (持续20秒)
-    if (s_ctx.status.spo2_validity == MEASURE_VALID) {
-        uint8_t spo2 = s_ctx.status.spo2;
+        // 3. 血氧告警检查（连续 2 次异常测量）
+        if (s_ctx.status.spo2_validity == MEASURE_VALID) {
+            uint8_t spo2 = s_ctx.status.spo2;
 
-        if (spo2 <= SPO2_ALARM_LOW) {
-            if (!s_ctx.alert.spo2_in_alert) {
-                s_ctx.alert.spo2_in_alert = true;
-                s_ctx.alert.spo2_alert_start = timestamp;
-            } else if ((timestamp - s_ctx.alert.spo2_alert_start) >= SPO2_ALARM_DURATION_MS) {
-                if (new_level < ALERT_LEVEL_ALARM) {
-                    new_alert = ALERT_TYPE_SPO2_LOW;
-                    new_level = ALERT_LEVEL_ALARM;
+            if (spo2 <= SPO2_ALARM_LOW) {
+                if (!s_ctx.alert.spo2_in_alert) {
+                    // 首次异常：进入告警状态，立刻切换到实时模式
+                    s_ctx.alert.spo2_in_alert = true;
+                    s_ctx.alert.spo2_alert_count = 1;
+                    sensor_set_mode(SENSOR_HR_SPO2, SAMPLING_MODE_REALTIME);
+                    ESP_LOGW(TAG, "SpO2 abnormal (%d%%), enter realtime mode", spo2);
+                } else {
+                    // 后续异常：递增计数
+                    s_ctx.alert.spo2_alert_count++;
+                    if (s_ctx.alert.spo2_alert_count >= SPO2_ALARM_COUNT) {
+                        // 连续 2 次异常 → 触发报警
+                        if (new_level < ALERT_LEVEL_ALARM) {
+                            new_alert = ALERT_TYPE_SPO2_LOW;
+                            new_level = ALERT_LEVEL_ALARM;
+                            alert_value = spo2 * 10;
+                        }
+                    }
+                }
+            } else if (spo2 <= SPO2_WARNING_LOW) {
+                // WARNING 级别（立即触发，不走计数制）
+                if (new_level < ALERT_LEVEL_WARNING) {
+                    new_alert = ALERT_TYPE_SPO2_WARNING;
+                    new_level = ALERT_LEVEL_WARNING;
                     alert_value = spo2 * 10;
                 }
+                // WARNING 不影响 spo2_in_alert 状态
+            } else {
+                // 恢复正常：清除告警状态
+                s_ctx.alert.spo2_in_alert = false;
+                s_ctx.alert.spo2_alert_count = 0;
             }
-        } else if (spo2 <= SPO2_WARNING_LOW) {
-            // WARNING 级别
-            if (new_level < ALERT_LEVEL_WARNING) {
-                new_alert = ALERT_TYPE_SPO2_WARNING;
-                new_level = ALERT_LEVEL_WARNING;
-                alert_value = spo2 * 10;
+        }
+
+        // 检查是否应退出 HR/SpO2 实时模式
+        // 心率和血氧共享 MAX30102，只有两者都恢复正常才退出实时模式
+        if (!s_ctx.alert.hr_in_alert && !s_ctx.alert.spo2_in_alert) {
+            if (sensor_get_mode(SENSOR_HR_SPO2) == SAMPLING_MODE_REALTIME) {
+                sensor_set_mode(SENSOR_HR_SPO2, SAMPLING_MODE_NORMAL);
+                ESP_LOGI(TAG, "HR/SpO2 normalized, exit realtime mode");
             }
-        } else {
-            s_ctx.alert.spo2_in_alert = false;
         }
     }
 
@@ -534,7 +585,7 @@ static void check_alerts(uint32_t timestamp)
 
 static void publish_health_alert(alert_type_t type, alert_level_t level, int16_t value, uint32_t timestamp)
 {
-    // ESP_LOGW(TAG, "Health alert: type=%d, level=%d, value=%d", type, level, value);
+    ESP_LOGW(TAG, "Health alert: type=%d, level=%d, value=%d", type, level, value);
 
     // 触发对应传感器进入实时检测模式
     uint8_t sensor_mask = 0;
