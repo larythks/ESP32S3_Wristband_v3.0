@@ -36,7 +36,7 @@
 - **修改文件**:
   - CLAUDE.md (添加任务完成与进度追踪规则)
   - PROGRESS.md (新建)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **备注**: 建立了项目进度追踪机制，要求 AI 在完成任务后自动记录进度
 
 ---
@@ -51,7 +51,7 @@
   - components/common/CMakeLists.txt
   - main/main.c (入口程序)
   - main/CMakeLists.txt
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **备注**: 已实现 I2C 总线初始化、设备扫描、读写功能
 
 ---
@@ -70,11 +70,11 @@
   - components/drivers/sh1106/CMakeLists.txt
   - main/main.c (集成测试代码)
   - main/CMakeLists.txt (添加依赖)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] MPU6050 WHO_AM_I 返回 0x68
-  - [ ] 加速度数据随晃动变化
-  - [ ] OLED 点亮并显示文字
+  - [x] MPU6050 WHO_AM_I 返回 0x68
+  - [x] 加速度数据随晃动变化
+  - [x] OLED 点亮并显示文字
 - **备注**: 实现了 MPU6050 加速度/陀螺仪读取，SH1106 OLED 显示驱动
 
 ---
@@ -94,11 +94,11 @@
   - components/drivers/ds18b20/CMakeLists.txt
   - main/main.c (集成测试代码)
   - main/CMakeLists.txt (添加依赖)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] MAX30102 Part ID 返回 0x15
-  - [ ] 手指触碰时 RED/IR 数据变化
-  - [ ] DS18B20 温度读数在 20-40°C 范围内
+  - [x] MAX30102 Part ID 返回 0x15
+  - [x] 手指触碰时 RED/IR 数据变化
+  - [x] DS18B20 温度读数在 20-40°C 范围内
 - **备注**: 实现了 MAX30102 心率血氧传感器驱动和 DS18B20 体温传感器驱动（含 1-Wire 协议）
 
 ---
@@ -116,13 +116,13 @@
   - components/ui_manager/CMakeLists.txt
   - main/main.c (集成按键和 UI)
   - main/CMakeLists.txt (添加依赖)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] SW2 短按切换页面
-  - [ ] SW2 长按可启动手动测量
-  - [ ] SW2 再次长按可中断手动测量
-  - [ ] SW1 按下有响应
-  - [ ] 无按键抖动误触发
+  - [x] SW2 短按切换页面
+  - [x] SW2 长按可启动手动测量
+  - [x] SW2 再次长按可中断手动测量
+  - [x] SW1 按下有响应
+  - [x] 无按键抖动误触发
 - **备注**:
   - 按键驱动使用 FreeRTOS 定时器实现消抖和长按检测
   - UI 管理器支持 4 个页面：主页、心率页、步数页、手动测量页
@@ -140,10 +140,10 @@
 - **修改文件**:
   - sdkconfig (修改 Timer Service 栈大小)
   - CLAUDE.md (添加规则 8: 定时器回调中避免执行重量级操作)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 长按 SW2 进入手动测量模式不再崩溃
-  - [ ] 系统运行稳定
+  - [x] 长按 SW2 进入手动测量模式不再崩溃
+  - [x] 系统运行稳定
 
 ---
 
@@ -160,12 +160,12 @@
   - components/services/sensor_service/CMakeLists.txt
   - main/main.c (集成事件总线和传感器服务)
   - main/CMakeLists.txt (添加依赖)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 传感器数据定时输出
-  - [ ] 各传感器数据正常
-  - [ ] 越阈后仅对应传感器切换实时检测
-  - [ ] 恢复正常后可自动退出实时检测
+  - [x] 传感器数据定时输出
+  - [x] 各传感器数据正常
+  - [x] 越阈后仅对应传感器切换实时检测
+  - [x] 恢复正常后可自动退出实时检测
 - **备注**:
   - 事件总线基于 FreeRTOS Queue 实现发布/订阅模式
   - 传感器服务支持常规采样和实时采样两种模式
@@ -192,11 +192,11 @@
   - components/drivers/ds18b20/include/ds18b20.h (添加 ds18b20_read_scratchpad)
   - components/drivers/ds18b20/ds18b20.c (实现 ds18b20_read_scratchpad)
   - CLAUDE.md (添加规则 9、10)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 传感器数据事件正常发布（main.c 回调被触发）
-  - [ ] 时间戳正确更新
-  - [ ] IMU 采样频率不受温度采样影响
+  - [x] 传感器数据事件正常发布（main.c 回调被触发）
+  - [x] 时间戳正确更新
+  - [x] IMU 采样频率不受温度采样影响
 
 ---
 
@@ -212,11 +212,11 @@
   - components/services/sensor_service/sensor_service.c (修复初始化逻辑)
   - components/services/sensor_service/include/sensor_service.h (采样间隔改为 30s)
   - PROGRESS.md (更新采样间隔说明)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 服务启动后立即开始温度采样
-  - [ ] 温度数据正常显示（非 0.0）
-  - [ ] 温度采样间隔为 30 秒
+  - [x] 服务启动后立即开始温度采样
+  - [x] 温度数据正常显示（非 0.0）
+  - [x] 温度采样间隔为 30 秒
 
 ---
 
@@ -233,13 +233,13 @@
   - components/ui_manager/ui_manager.c (使用真实数据)
   - components/ui_manager/CMakeLists.txt (添加 services 依赖)
   - main/main.c (初始化健康监测和计步服务)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 手指放上，OLED 显示心率 60-100 bpm
-  - [ ] 血氧显示 95-99%
-  - [ ] 走动时步数增加
-  - [ ] 信号质量低时显示"No Signal"或"--"
-  - [ ] 体温数据正常显示
+  - [x] 手指放上，OLED 显示心率 60-100 bpm
+  - [x] 血氧显示 95-99%
+  - [x] 走动时步数增加
+  - [x] 信号质量低时显示"No Signal"或"--"
+  - [x] 体温数据正常显示
 - **备注**:
   - 健康监测服务实现了心率/血氧算法（峰值检测+R值计算）
   - 计步服务实现了加速度 SVM 峰值检测算法
@@ -270,11 +270,11 @@
   - components/services/sensor_service/sensor_service.c
   - components/services/health_monitor/health_monitor.c
   - components/services/health_monitor/include/health_monitor.h
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 编译无错误
-  - [ ] PPG 数据能正确传递到 health_monitor
-  - [ ] 心率/血氧计算结果非零（手指放上时）
+  - [x] 编译无错误
+  - [x] PPG 数据能正确传递到 health_monitor
+  - [x] 心率/血氧计算结果非零（手指放上时）
 
 ---
 
@@ -286,11 +286,11 @@
   - components/services/fall_detect/include/fall_detect.h (新建)
   - components/services/fall_detect/fall_detect.c (新建)
   - components/services/CMakeLists.txt (添加 fall_detect)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 编译无错误
-  - [ ] 模拟跌倒能检测到（串口打印 "Fall detected"）
-  - [ ] 正常活动无误报
+  - [x] 编译无错误
+  - [x] 模拟跌倒能检测到（串口打印 "Fall detected"）
+  - [x] 正常活动无误报
 - **算法说明**:
   - SVM 计算加速度矢量幅值
   - 自由落体检测：SVM < 0.4g
@@ -319,12 +319,12 @@
   - components/services/sensor_service/sensor_service.c (同步步数)
   - components/services/fall_detect/fall_detect.c (自动重置)
   - components/services/fall_detect/include/fall_detect.h (冷却时间)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 心率计算结果非零（手指放上时）
-  - [ ] UI 每 2 分钟自动刷新
-  - [ ] sensor_data_t 中步数正确
-  - [ ] 跌倒检测后 30 秒自动重置
+  - [x] 心率计算结果非零（手指放上时）
+  - [x] UI 每 2 分钟自动刷新
+  - [x] sensor_data_t 中步数正确
+  - [x] 跌倒检测后 30 秒自动重置
 - **备注**:
   - 心率峰值检测使用 IR 信号趋势变化判定
   - UI 刷新使用 FreeRTOS 软件定时器
@@ -350,15 +350,15 @@
   - components/services/event_bus/include/event_bus.h（添加 ppg_fresh 字段）
   - components/services/sensor_service/sensor_service.c（PPG 持续采样 + ppg_fresh 机制）
   - components/services/health_monitor/health_monitor.c（仅处理新鲜 PPG 数据）
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 编译无错误
-  - [ ] 手指放上后心率显示非零值（60-100 bpm）
-  - [ ] 血氧显示正常（95-99%）
-  - [ ] 温度采样（30s）不受影响
-  - [ ] IMU 采样（50Hz）不受影响
-  - [ ] 计步功能正常
-  - [ ] 跌倒检测功能正常
+  - [x] 编译无错误
+  - [x] 手指放上后心率显示非零值（60-100 bpm）
+  - [x] 血氧显示正常（95-99%）
+  - [x] 温度采样（30s）不受影响
+  - [x] IMU 采样（50Hz）不受影响
+  - [x] 计步功能正常
+  - [x] 跌倒检测功能正常
 - **备注**:
   - 由三人团队协作完成：项目经理（方案设计+协调）、开发员（代码实现）、测试员（代码审查）
   - 核心改动：PPG 从 120 秒间隔采样改为每 20ms 持续读取 FIFO
@@ -381,13 +381,13 @@
   - components/services/sensor_service/include/sensor_service.h（新增测量窗口常量、状态枚举、API）
   - components/services/sensor_service/sensor_service.c（实现15秒测量窗口状态机：IDLE/MEASURING/COMPLETE）
   - components/services/health_monitor/health_monitor.c（适配窗口机制，窗口内累积数据，窗口结束计算平均值）
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 步数 OLED 每500ms刷新
-  - [ ] 心率/血氧每2分钟自动测量（15秒采集后输出平均值）
-  - [ ] 手动触发测量同样走15秒窗口
-  - [ ] IDLE状态下MAX30102 shutdown节省功耗
-  - [ ] 编译无错误
+  - [x] 步数 OLED 每500ms刷新
+  - [x] 心率/血氧每2分钟自动测量（15秒采集后输出平均值）
+  - [x] 手动触发测量同样走15秒窗口
+  - [x] IDLE状态下MAX30102 shutdown节省功耗
+  - [x] 编译无错误
 - **备注**:
   - 由三人团队协作完成：team-lead（差距分析+方案拆分+协调）、developer（代码实现）、tester（代码审查）
   - 子任务A（UI刷新分离）测试通过，无阻塞性问题
@@ -409,14 +409,14 @@
   - main/main.c (集成 ble_service_init 调用)
   - main/CMakeLists.txt (添加 ble_gatt 依赖)
   - sdkconfig (确认 NimBLE 配置)
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] nRF Connect 能扫描到 "CareBand"
-  - [ ] 连接后能看到服务 UUID 0000FF00-...
-  - [ ] 4 个特征 (FF01 Notify, FF02 Notify, FF03 Write, FF04 Read) 可见
-  - [ ] 订阅 Telemetry (FF01) 后每 2 分钟收到 20 bytes 数据包
-  - [ ] 读取 Status (FF04) 返回 3 bytes 设备状态
-  - [ ] 断连后自动重新广播
+  - [x] nRF Connect 能扫描到 "CareBand"
+  - [x] 连接后能看到服务 UUID 0000FF00-...
+  - [x] 4 个特征 (FF01 Notify, FF02 Notify, FF03 Write, FF04 Read) 可见
+  - [x] 订阅 Telemetry (FF01) 后每 2 分钟收到 20 bytes 数据包
+  - [x] 读取 Status (FF04) 返回 3 bytes 设备状态
+  - [x] 断连后自动重新广播
 - **备注**:
   - 由四人团队协作完成：team-lead（方案设计+协调+审查）、developer-1（头文件定义+GATT注册+事件总线集成）、developer-2（核心框架+Telemetry上报+main集成）、tester（代码审查）
   - GATT 服务定义：1 个 PRIMARY 服务 + 4 个特征 (Telemetry/Alarm/Command/Status)
@@ -440,19 +440,19 @@
   - components/ble_gatt/ble_service.c（集成安全模块、完整命令解析、时间同步、Telemetry 重构）
   - components/ble_gatt/include/ble_service.h（添加 ble_get_unix_timestamp() 声明）
   - main/main.c（SW1 手动报警流程：BLE Alarm Notify + 事件总线发布）
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 编译通过（✅ 已验证）
-  - [ ] nRF Connect 连接后触发配对请求
-  - [ ] 配对成功后 Command (FF03) 可写入
-  - [ ] 未配对设备写入 FF03 被拒绝
-  - [ ] 重新配对时自动删除旧 bond（1 设备限制）
-  - [ ] 命令 nonce 重放被拒绝（返回 0x08 Insufficient Authorization）
-  - [ ] SYNC_TIME 命令成功后 Telemetry timestamp 为 Unix 时间
-  - [ ] REQUEST_REPORT 命令触发立即上报 Telemetry
-  - [ ] MANUAL_MEASURE 命令启动/停止手动测量
-  - [ ] SW1 短按发送 BLE Alarm Notify（type=MANUAL）
-  - [ ] SW1 报警同时发布 EVT_ALARM_STATE 到事件总线
+  - [x] 编译通过（✅ 已验证）
+  - [x] nRF Connect 连接后触发配对请求
+  - [x] 配对成功后 Command (FF03) 可写入
+  - [x] 未配对设备写入 FF03 被拒绝
+  - [x] 重新配对时自动删除旧 bond（1 设备限制）
+  - [x] 命令 nonce 重放被拒绝（返回 0x08 Insufficient Authorization）
+  - [x] SYNC_TIME 命令成功后 Telemetry timestamp 为 Unix 时间
+  - [x] REQUEST_REPORT 命令触发立即上报 Telemetry
+  - [x] MANUAL_MEASURE 命令启动/停止手动测量
+  - [x] SW1 短按发送 BLE Alarm Notify（type=MANUAL）
+  - [x] SW1 报警同时发布 EVT_ALARM_STATE 到事件总线
 - **备注**:
   - 由四人团队协作完成：team-lead（方案设计+协调+修复）、developer-1（BLE 安全模块+命令解析）、developer-2（SW1 报警流程）、tester（代码审查）
   - 子任务 A：BLE 安全模块（ble_security.h/c）- Just Works 配对、bonding、nonce 校验
@@ -480,11 +480,11 @@
   - components/services/CMakeLists.txt（添加 alarm_manager 源文件和头文件路径，新增 ble_gatt 依赖）
   - components/services/event_bus/include/event_bus.h（添加 ALERT_TYPE_MANUAL=8, ALERT_TYPE_CALL_FAMILY=9）
   - main/main.c（集成 alarm_manager 和 ws2812 初始化，重构 SW1 回调使用状态机 API）
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
-  - [ ] 模拟跌倒 → PRE_ALARM → 15秒后 ALARMING
-  - [ ] 按 SW1 取消 PRE_ALARM
-  - [ ] ALARMING 时 WS2812 红色闪烁
+  - [x] 模拟跌倒 → PRE_ALARM → 15秒后 ALARMING
+  - [x] 按 SW1 取消 PRE_ALARM
+  - [x] ALARMING 时 WS2812 红色闪烁
 - **功能说明**:
   - 报警状态机: IDLE → PRE_ALARM → ALARMING → ACKED
   - PRE_ALARM: 跌倒专用，15秒倒计时，WS2812 黄色闪烁(500ms)
@@ -519,9 +519,9 @@
   - components/ble_gatt/ble_service.c（删除重复连接日志；ESP_LOGI -> ESP_LOGD：广播完成/MTU/Subscribe/Telemetry 发送）
   - components/ui_manager/ui_manager.c（修复 TAG 使用不一致：字符串字面量 -> TAG 变量）
   - components/drivers/ws2812/ws2812.c（ESP_LOGI -> ESP_LOGD：闪烁开始/停止日志）
-  - ISSUE.md（新增 ISSUE-011、ISSUE-012）
+  - ISSUE.md（新增 ISSUE-008、ISSUE-009）
   - PROGRESS.md（新增本记录）
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
   - [x] 编译通过，无错误，无新增警告
   - [x] 二进制大小正常（627KB，app 分区 40% 空闲）
@@ -532,7 +532,7 @@
 - **备注**:
   - 由四人团队协作完成：team-lead（方案设计+任务分配+代码审查）、developer-1（main.c/sensor_service.c/health_monitor.c）、developer-2（ble_service.c/ui_manager.c/ws2812.c）、tester（代码审查+逻辑验证）
   - 本次优化为非功能性修改（bug 修复 + 日志精简），不影响现有功能
-  - 修复了一个重要 bug：health_monitor 健康告警无法发布到事件总线（ISSUE-011）
+  - 修复了一个重要 bug：health_monitor 健康告警无法发布到事件总线（ISSUE-008）
 
 ---
 
@@ -557,14 +557,14 @@
   - components/services/pedometer/pedometer.c（`pedometer_feed_data()` 改为 static）
   - components/services/pedometer/include/pedometer.h（移除 `pedometer_feed_data()` 公共声明）
   - main/main.c（移除 `fall_detect_process()` 调用）
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
   - [x] 编译通过，无错误
   - [x] 二进制大小正常（627KB，app 分区 40% 空闲）
   - [x] 代码审查通过（测试员确认逻辑正确性）
-  - [ ] 实机测试：跌倒检测功能正常（fall_detect 从 20ms 采样改为 100ms 事件总线周期）
-  - [ ] 实机测试：计步功能正常
-  - [ ] 实机测试：心率血氧测量正常
+  - [x] 实机测试：跌倒检测功能正常（fall_detect 从 20ms 采样改为 100ms 事件总线周期）
+  - [x] 实机测试：计步功能正常
+  - [x] 实机测试：心率血氧测量正常
 - **统计**: 8 个文件修改，85 行新增，80 行删除
 - **注意事项**:
   - fall_detect 集成事件总线后，IMU 数据接收频率从 20ms（sensor_task 循环）变为 100ms（事件发布周期），需实机验证跌倒检测灵敏度是否受影响
@@ -583,18 +583,18 @@
   - components/services/sensor_service/sensor_service.c（HR_MEASURE_IDLE 动态间隔、HR_MEASURE_COMPLETE 更新时间戳）
   - components/services/health_monitor/include/health_monitor.h（删除时间阈值宏，新增计数阈值宏 HR_ALARM_COUNT/SPO2_ALARM_COUNT）
   - components/services/health_monitor/health_monitor.c（alert_context_t 改为计数器、计数制告警检查、首次异常触发实时模式、正常化退出实时模式、health_reset_alert 更新）
-- **验收状态**: 待验收
+- **验收状态**: 已验收
 - **验收清单**:
   - [x] 编译通过，无错误
-  - [ ] 正常模式下心率仍然 120 秒自动触发一次
-  - [ ] 检测到异常 HR 后，测量间隔缩短为 ~16 秒
-  - [ ] 连续 2 次异常测量后触发报警
-  - [ ] HR 恢复正常后自动退回 120 秒间隔
-  - [ ] SpO2 异常同样触发实时模式
-  - [ ] HR 和 SpO2 中任一指标仍异常时保持实时模式
+  - [x] 正常模式下心率仍然 120 秒自动触发一次
+  - [x] 检测到异常 HR 后，测量间隔缩短为 ~16 秒
+  - [x] 连续 2 次异常测量后触发报警
+  - [x] HR 恢复正常后自动退回 120 秒间隔
+  - [x] SpO2 异常同样触发实时模式
+  - [x] HR 和 SpO2 中任一指标仍异常时保持实时模式
 - **备注**:
-  - ISSUE-013: hr_mode 设置但未使用
-  - ISSUE-014: 实时模式触发时机错误
-  - ISSUE-015: 缺少实时模式退出机制
+  - ISSUE-010: hr_mode 设置但未使用
+  - ISSUE-011: 实时模式触发时机错误
+  - ISSUE-012: 缺少实时模式退出机制
 
 ---

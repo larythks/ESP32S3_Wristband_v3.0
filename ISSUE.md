@@ -207,9 +207,7 @@ return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
 
 ---
 
----
-
-## ISSUE-010：ALARMING 状态下新报警不发布 EVT_ALARM_STATE 事件
+## ISSUE-008：ALARMING 状态下新报警不发布 EVT_ALARM_STATE 事件
 
 **发现日期**：2026-02-16
 
@@ -233,7 +231,7 @@ case ALARM_STATE_ALARMING:
 
 ---
 
-## ISSUE-012：ui_manager 日志 TAG 使用不一致
+## ISSUE-009：ui_manager 日志 TAG 使用不一致
 
 **发现日期**：2026-02-16
 
@@ -256,7 +254,7 @@ case ALARM_STATE_ALARMING:
 
 ---
 
-## ISSUE-013：心率/血氧 hr_mode 被设置但从未在采样逻辑中使用
+## ISSUE-010：心率/血氧 hr_mode 被设置但从未在采样逻辑中使用
 
 **发现日期**：2026-02-17
 
@@ -290,7 +288,7 @@ case HR_MEASURE_COMPLETE:
 
 ---
 
-## ISSUE-014：心率/血氧实时模式在报警确认后才触发，而非首次异常时
+## ISSUE-011：心率/血氧实时模式在报警确认后才触发，而非首次异常时
 
 **发现日期**：2026-02-17
 
@@ -314,7 +312,7 @@ case HR_MEASURE_COMPLETE:
 
 ---
 
-## ISSUE-015：心率/血氧正常化后没有退出实时模式的机制
+## ISSUE-012：心率/血氧正常化后没有退出实时模式的机制
 
 **发现日期**：2026-02-17
 
@@ -342,7 +340,7 @@ if (!s_ctx.alert.hr_in_alert && !s_ctx.alert.spo2_in_alert) {
 
 ---
 
-## ISSUE-016：心率/血氧告警计数在每次事件回调时递增而非每次测量时递增
+## ISSUE-013：心率/血氧告警计数在每次事件回调时递增而非每次测量时递增
 
 **发现日期**：2026-02-17
 
@@ -372,7 +370,7 @@ if (s_ctx.ppg_result_fresh) {
 
 ---
 
-## ISSUE-017：OLED 花屏 — 多任务并发操作帧缓冲区/I2C 总线导致显示数据损坏
+## ISSUE-014：OLED 花屏 — 多任务并发操作帧缓冲区/I2C 总线导致显示数据损坏
 
 **发现日期**：2026-02-17
 

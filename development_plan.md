@@ -97,6 +97,14 @@
 | 对外接口 | `esp_err_t audio_player_init(void)`<br>`esp_err_t audio_play_wav(const char *path)`<br>`esp_err_t audio_mic_init(void)`<br>`esp_err_t audio_mic_read(int16_t *buffer, size_t len)` |
 | 依赖 | driver/i2s, esp_partition (SPIFFS) |
 
+#### components/drivers/ws2812
+| 项目 | 内容 |
+|-----|------|
+| 职责 | WS2812 RGB LED 驱动、RMT 外设控制、闪烁模式管理 |
+| 不做 | 复杂灯效、多 LED 级联动画 |
+| 对外接口 | `esp_err_t ws2812_init(gpio_num_t pin)`<br>`esp_err_t ws2812_set_color(uint8_t r, uint8_t g, uint8_t b)`<br>`esp_err_t ws2812_start_blink(uint8_t r, uint8_t g, uint8_t b, uint32_t interval_ms)`<br>`void ws2812_stop_blink(void)` |
+| 依赖 | driver/rmt, freertos/timers |
+
 #### components/drivers/button
 | 项目 | 内容 |
 |-----|------|
@@ -169,21 +177,13 @@
 | 对外接口 | `esp_err_t ble_service_init(void)`<br>`esp_err_t ble_notify_telemetry(telemetry_t *data)`<br>`esp_err_t ble_notify_alarm(alarm_notify_t *data)`<br>`bool ble_is_connected(void)` |
 | 依赖 | nimble, services/event_bus |
 
-#### components/app/ui_manager
+#### components/ui_manager
 | 项目 | 内容 |
 |-----|------|
 | 职责 | UI 页面状态管理、页面切换、数据渲染（步数每 500ms 刷新，心率/血氧每 2 分钟刷新） |
 | 不做 | 直接操作 OLED（通过 drivers 层） |
 | 对外接口 | `esp_err_t ui_manager_init(void)`<br>`void ui_switch_page(ui_page_t page)`<br>`void ui_update(void)` |
 | 依赖 | drivers/sh1106, services/event_bus |
-
-#### components/app/app_main
-| 项目 | 内容 |
-|-----|------|
-| 职责 | 主任务编排、模块初始化顺序、系统协调 |
-| 不做 | 具体业务逻辑实现 |
-| 对外接口 | 无（入口点） |
-| 依赖 | 所有 services/*, ble_gatt/*, ui_manager |
 
 ### 2.2 Flutter App 模块
 
@@ -702,7 +702,6 @@ I2C device found at 0x3C (SH1106)
 **产出物**:
 - `components/ble_gatt/ble_security.h/.c`（或并入 `ble_service.c`）
 - `mobile_flutter/lib/minimal_gateway/`（最小闭环代码）
-- `docs/week2_e2e_slice.md`（抓包/日志截图）
 
 **验收方法**:
 - 未配对设备无法写 Command 特征
@@ -999,6 +998,7 @@ ESP32S3_Wristband_v3.0/
 │   │   ├── mpu6050/         # 6轴IMU
 │   │   ├── sh1106/          # OLED显示
 │   │   ├── audio/           # I2S音频
+│   │   ├── ws2812/          # RGB报警灯
 │   │   └── button/          # 按键
 │   ├── services/
 │   │   ├── event_bus/       # 事件总线
@@ -1009,10 +1009,7 @@ ESP32S3_Wristband_v3.0/
 │   │   ├── alarm_manager/   # 报警管理
 │   │   └── voice_cmd/       # 语音命令
 │   ├── ble_gatt/            # BLE服务
-│   └── app/
-│       └── ui_manager/      # UI管理
-├── docs/
-│   └── week2_e2e_slice.md   # 最小闭环联调记录
+│   └── ui_manager/          # UI管理
 ├── test_reports/
 │   └── fall_detect_metrics.md  # 跌倒检测量化报告
 ├── main/
@@ -1034,7 +1031,6 @@ mobile_flutter/
 - 接口文档（BLE GATT + MQTT）
 - 测试记录模板
 - 跌倒检测量化报告（Recall/误报率/响应时间）
-- Week2 最小端到端切片联调记录
 - 演示脚本
 
 ---
