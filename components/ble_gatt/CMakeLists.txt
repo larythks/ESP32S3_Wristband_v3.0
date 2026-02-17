@@ -4,5 +4,5 @@ idf_component_register(
         "ble_security.c"
     INCLUDE_DIRS
         "include"
-    REQUIRES bt freertos services
+    REQUIRES bt freertos services drivers
 )

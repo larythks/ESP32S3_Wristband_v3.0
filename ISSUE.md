@@ -507,3 +507,51 @@ static void step_refresh_timer_callback(TimerHandle_t timer)
 
 **涉及文件**：
 - `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-017：BLE SYNC_TIME 命令未同步到 DS3231 RTC 硬件时钟
+
+**发现日期**：2026-02-17
+
+**原因**：
+迭代 2.5 实现的 BLE `SYNC_TIME` 命令（cmd_type=0x02）仅将 Unix 时间戳存储在软件变量 `s_time_offset` 中，未写入 DS3231 RTC 硬件。迭代 1.5 新增 DS3231 驱动后，Home 页面的日期时间显示依赖 `ds3231_get_time()` 从 RTC 读取，但 RTC 中的时间从未被校准过。
+
+**后果**：
+- Home 页面显示的日期和时间不准确（DS3231 出厂默认时间或上次断电时的时间）
+- 通过 nRF Connect 发送 SYNC_TIME 命令后，Telemetry 时间戳正确但 OLED 显示时间仍错误
+
+**解决方案**：
+在 `ble_service.c` 的 `BLE_CMD_SYNC_TIME` 处理分支中，将 Unix 时间戳转换为年月日时分秒后调用 `ds3231_set_time()` 写入 RTC：
+```c
+uint32_t ts = cmd->timestamp + 8 * 3600;  /* UTC+8 */
+/* Unix 时间戳 -> 年月日时分秒 -> ds3231_set_time() */
+```
+
+**涉及文件**：
+- `components/ble_gatt/ble_service.c`（新增 ds3231.h 引用和 RTC 写入逻辑）
+- `components/ble_gatt/CMakeLists.txt`（REQUIRES 新增 drivers 依赖）
+
+---
+
+## ISSUE-018：SYNC_TIME 写入 DS3231 时缺少 day_of_week 导致校验失败
+
+**发现日期**：2026-02-17
+
+**原因**：
+ISSUE-017 修复中新增的 Unix 时间戳转 `ds3231_time_t` 逻辑未设置 `day_of_week` 字段，该字段默认为 0。`ds3231_set_time()` 内部的 `is_time_valid()` 要求 `day_of_week` 在 1-7 范围内，0 不合法，导致返回 `ESP_ERR_INVALID_ARG`。
+
+**后果**：
+- BLE SYNC_TIME 命令执行后软件时间偏移正确更新，但 DS3231 硬件 RTC 写入失败
+- Home 页面日期时间仍不准确
+
+**解决方案**：
+根据 Unix 时间戳计算星期几（1970-01-01 为周四），赋值给 `rtc_time.day_of_week`：
+```c
+uint32_t total_days = ts / 86400;
+uint8_t dow = (uint8_t)((total_days + 3) % 7 + 1);  /* 1=周一 ... 7=周日 */
+rtc_time.day_of_week = dow;
+```
+
+**涉及文件**：
+- `components/ble_gatt/ble_service.c`

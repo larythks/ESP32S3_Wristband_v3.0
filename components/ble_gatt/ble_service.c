@@ -7,6 +7,7 @@
 #include "ble_security.h"
 #include "ble_gatt_defs.h"
 #include "event_bus.h"
+#include "ds3231.h"
 
 #include "sensor_service.h"
 #include "health_monitor.h"
@@ -209,6 +210,54 @@ static int gatt_chr_access_command(uint16_t conn_handle, uint16_t attr_handle,
         s_time_offset = (int64_t)cmd->timestamp - local_sec;
         ESP_LOGI(TAG, "SYNC_TIME: unix=%lu, offset=%lld",
                  (unsigned long)cmd->timestamp, (long long)s_time_offset);
+
+        /* 将 Unix 时间戳写入 DS3231 RTC */
+        {
+            uint32_t ts = cmd->timestamp + 8 * 3600;  /* UTC+8 北京时间 */
+            uint32_t days = ts / 86400;
+            uint32_t daytime = ts % 86400;
+            uint8_t hour = daytime / 3600;
+            uint8_t minute = (daytime % 3600) / 60;
+            uint8_t second = daytime % 60;
+
+            /* 从 1970-01-01 起算日期 */
+            uint16_t year = 1970;
+            while (1) {
+                uint16_t yday = ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) ? 366 : 365;
+                if (days < yday) break;
+                days -= yday;
+                year++;
+            }
+            static const uint16_t mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+            uint8_t month = 0;
+            for (month = 0; month < 12; month++) {
+                uint16_t md = mdays[month] + ((month == 1 && leap) ? 1 : 0);
+                if (days < md) break;
+                days -= md;
+            }
+
+            ds3231_time_t rtc_time = {
+                .year   = year,
+                .month  = month + 1,
+                .day    = (uint8_t)(days + 1),
+                .hour   = hour,
+                .minute = minute,
+                .second = second,
+            };
+            /* 1970-01-01 是星期四(4), DS3231 day_of_week: 1=周一 ... 7=周日 */
+            uint32_t total_days = ts / 86400;
+            uint8_t dow = (uint8_t)((total_days + 3) % 7 + 1);  /* +3: 周四偏移 */
+            rtc_time.day_of_week = dow;
+            esp_err_t ret = ds3231_set_time(&rtc_time);
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "DS3231 synced: %04d-%02d-%02d %02d:%02d:%02d",
+                         rtc_time.year, rtc_time.month, rtc_time.day,
+                         rtc_time.hour, rtc_time.minute, rtc_time.second);
+            } else {
+                ESP_LOGW(TAG, "DS3231 set_time failed: %s", esp_err_to_name(ret));
+            }
+        }
         return 0;
     }
 

@@ -689,3 +689,24 @@
   - 二进制大小：`0x99f20`，app 分区空闲约 40%
 
 ---
+
+### 2026-02-17 - Bug 修复: BLE SYNC_TIME 未同步到 DS3231 RTC
+
+- **迭代**: 迭代 1.5 / 2.5 联动修复
+- **状态**: ✅ 已完成（待实机验收）
+- **任务简述**: 扩展 BLE SYNC_TIME 命令，将 Unix 时间戳转换为本地时间（UTC+8）写入 DS3231 RTC，使 Home 页面日期时间显示可通过 BLE 校准
+- **修改文件**:
+  - components/ble_gatt/ble_service.c（新增 ds3231.h 引用，SYNC_TIME 分支添加 Unix→年月日时分秒转换和 ds3231_set_time() 调用）
+  - components/ble_gatt/CMakeLists.txt（REQUIRES 新增 drivers 依赖）
+  - ISSUE.md（新增 ISSUE-017）
+  - PROGRESS.md（本记录）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0x9a230，app 分区 40% 空闲）
+  - [ ] nRF Connect 发送 SYNC_TIME 命令后串口日志显示 DS3231 时间正确
+  - [ ] Home 页面日期时间随之更新
+- **备注**:
+  - 时区硬编码为 UTC+8（北京时间），后续可扩展为可配置
+  - 对应问题记录：ISSUE-017
+
+---
