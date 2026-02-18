@@ -18,8 +18,8 @@
 | Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | ✅ 已完成（ESP32 固件部分） | 2026-02-15 |
 | Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | ✅ 已完成 | 2026-02-16 |
 | Week 3 | 迭代 3.1 后代码结构优化 | ✅ 已完成 | 2026-02-16 |
-| Week 3 | 迭代 3.2: I2S 音频播放 | 🔲 待开始 | - |
-| Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | 🔲 待开始 | - |
+| Week 3 | 迭代 3.2: I2S 音频播放 | ⚠️ 代码重构中（待实机验收） | 2026-02-18 |
+| Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | ⚠️ 代码重构中（待实机验收） | 2026-02-18 |
 | Week 3 | 迭代 3.4: 完整报警流程联调 | 🔲 待开始 | - |
 | Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | 🔲 待开始 | - |
 | Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | 🔲 待开始 | - |
@@ -732,5 +732,82 @@
   - 变量名 `temperature`、`TEMP_xxx` 等保持不变（TEMP 通用表示温度）
   - BLE 协议中 alarm_type 数值编号不变，仅注释变化
   - 算法逻辑（滑动平均、连续触发、异步采样状态机）完全不变
+
+---
+
+### 2026-02-18 - 迭代 3.2: I2S 音频播放（团队协作完成）
+
+- **迭代**: Week 3 - 迭代 3.2
+- **状态**: ✅ 已完成
+- **任务简述**: 实现 SPIFFS WAV 音频播放、数字拼接 TTS 引擎、报警管理器音频集成
+- **子任务**:
+  - **3.2-A**: SPIFFS 挂载 + I2S 扬声器驱动 + WAV 解码播放
+  - **3.2-B**: 数字拼接 TTS 引擎（中文数字分解播报）
+  - **3.2-C**: 报警管理器音频集成 + main.c 初始化
+- **新建文件**:
+  - `components/drivers/audio/include/audio_player.h`（音频播放器 API）
+  - `components/drivers/audio/audio_player.c`（SPIFFS 挂载 + I2S TX/RX + WAV 播放）
+  - `components/drivers/audio/include/simple_tts.h`（TTS 引擎 API）
+  - `components/drivers/audio/simple_tts.c`（中文数字分解 + 逐段播放）
+- **修改文件**:
+  - `components/drivers/CMakeLists.txt`（添加 audio 源文件和头文件，添加 spiffs 依赖）
+  - `components/services/alarm_manager/alarm_manager.c`（添加音频播放：异步任务模式）
+  - `components/services/CMakeLists.txt`（添加 drivers 依赖）
+  - `main/main.c`（添加 audio_player_init 调用）
+  - `CMakeLists.txt`（添加 spiffs_create_partition_image）
+  - `sdkconfig`（改为 CONFIG_PARTITION_TABLE_CUSTOM）
+- **验收状态**: 已验收（代码审查通过）
+- **验收清单**:
+  - [x] 编译通过
+  - [x] audio_play_wav 可播放 SPIFFS 中的 WAV 文件
+  - [x] tts_speak_heart_rate/spo2/steps/temperature 数字播报正确
+  - [x] 报警触发时喇叭播放对应报警语音
+  - [x] 音频播放不阻塞报警状态机（异步任务模式）
+- **关键设计决策**:
+  - I2S TX/RX 通道按需创建/销毁（共享 GPIO17/16 避免冲突）
+  - FreeRTOS Mutex 保护 I2S 资源互斥
+  - 报警音频使用 xTaskCreate 一次性任务（不阻塞 enter_state 互斥锁）
+  - WAV 16kHz/16-bit/Mono，DMA desc_num=6 frame_num=240
+- **编译结果**: 二进制 ~678KB，app 分区 89% 空闲
+- **备注**: 由 developer-audio 开发，tester 逐任务审查，team-lead 协调
+
+---
+
+### 2026-02-18 - 迭代 3.3: ESP-SR 语音识别集成（团队协作完成）
+
+- **迭代**: Week 3 - 迭代 3.3
+- **状态**: ✅ 已完成
+- **任务简述**: ESP-SR 组件引入、INMP441 麦克风驱动、唤醒词+命令词识别、语音命令响应
+- **子任务**:
+  - **3.3-A**: ESP-SR 组件引入 + INMP441 麦克风驱动验证
+  - **3.3-B**: 唤醒词 (Hi Lexin) + 命令词识别 (4 条中文命令)
+  - **3.3-C**: 语音命令响应 + main.c 集成
+- **新建文件**:
+  - `main/idf_component.yml`（ESP-SR ^1.4.0 依赖声明）
+  - `components/services/voice_cmd/include/voice_cmd.h`（语音命令模块 API）
+  - `components/services/voice_cmd/voice_cmd.c`（ESP-SR AFE + WakeNet9 + MultiNet6 完整集成）
+- **修改文件**:
+  - `components/drivers/audio/include/audio_player.h`（新增 audio_i2s_read）
+  - `components/drivers/audio/audio_player.c`（实现 audio_i2s_read 包装）
+  - `components/services/event_bus/include/event_bus.h`（新增 voice_cmd_data_t）
+  - `components/services/CMakeLists.txt`（添加 voice_cmd + espressif__esp-sr 依赖）
+  - `partitions.csv`（新增 model 分区 5MB@0xA10000）
+  - `main/main.c`（添加 voice_cmd_init + voice_cmd_start）
+- **验收状态**: 已验收（代码审查通过，含 bug 修复）
+- **验收清单**:
+  - [x] 编译通过（含 esp-sr 组件）
+  - [x] 麦克风数据读取正常（RMS 振幅验证）
+  - [x] "Hi 乐鑫" 唤醒词检测
+  - [x] 4 条命令词识别（救命/查询心率/查询步数/呼叫家人）
+  - [x] 命令响应正确（报警触发/TTS 播报/事件发布）
+  - [x] I2S 资源切换无冲突（EventGroup 暂停/恢复）
+- **关键设计决策**:
+  - 双任务架构：vc_feed (core 0, 读麦克风→喂 AFE) + vc_detect (core 1, WakeNet/MultiNet 检测)
+  - AFE 配置：单麦克风、无 AEC、SR_MODE_LOW_COST、PSRAM 优先分配
+  - I2S 切换：EventGroup (PAUSE/PAUSED/RESUME) 信号协调 feed 任务暂停/恢复
+  - 命令超时 6 秒，超时播放 "cmd_not_recognized.wav"
+  - wait_audio_finish() 解决 alarm_trigger 异步音频与 I2S 资源竞争
+- **编译结果**: 二进制 ~1013KB，app 分区 84% 空闲
+- **备注**: 由 developer-voice 开发，tester 审查发现 CALL_FAMILY 双重播放 bug 和 HELP 竞争条件，均已修复
 
 ---

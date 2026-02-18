@@ -9,6 +9,8 @@ idf_component_register(
         "ds3231/ds3231.c"
         "button/button.c"
         "ws2812/ws2812.c"
+        "audio/audio_player.c"
+        "audio/simple_tts.c"
     INCLUDE_DIRS
         "common/include"
         "mpu6050/include"
@@ -18,5 +20,6 @@ idf_component_register(
         "ds3231/include"
         "button/include"
         "ws2812/include"
-    REQUIRES driver
+        "audio/include"
+    REQUIRES driver spiffs
 )

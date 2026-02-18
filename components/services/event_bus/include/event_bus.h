@@ -128,12 +128,21 @@ typedef struct {
 } health_alert_t;
 
 /**
+ * @brief 语音命令事件数据
+ */
+typedef struct {
+    int32_t cmd_id;                 // 语音命令 ID (voice_cmd_id_t)
+    uint32_t timestamp;             // 时间戳 (ms)
+} voice_cmd_data_t;
+
+/**
  * @brief 事件数据联合体
  */
 typedef union {
     sensor_data_t sensor;           // 传感器数据
     sampling_mode_event_t sampling; // 采样模式变更
     health_alert_t health_alert;    // 健康告警
+    voice_cmd_data_t voice_cmd;     // 语音命令数据
     uint32_t raw[12];               // 原始数据 (48 bytes，扩大以容纳 sensor_data_t)
 } event_data_t;
 

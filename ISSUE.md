@@ -579,3 +579,228 @@ rtc_time.day_of_week = dow;
 - `components/services/alarm_manager/alarm_manager.c`
 - `components/drivers/ws2812/ws2812.c`
 - `components/drivers/ws2812/include/ws2812.h`
+
+---
+
+## ISSUE-020：alarm_manager 的 get_alarm_wav 缺少 ALERT_TYPE_SPO2_WARNING 映射
+
+**发现日期**：2026-02-18
+
+**原因**：
+`alarm_manager.c` 的 `get_alarm_wav()` 函数中 switch-case 缺少 `ALERT_TYPE_SPO2_WARNING` 分支。当血氧预警触发报警进入 ALARMING 状态时，`get_alarm_wav()` 返回 NULL，导致 `alarm_audio_play_async(NULL)` 直接跳过音频播放。
+
+**后果**：
+- 血氧预警（SPO2_WARNING）级别的报警无语音播报
+- WS2812 灯光和 BLE 通知正常，但喇叭静默
+
+**解决方案**：
+在 `get_alarm_wav()` 的 switch 中添加 SPO2_WARNING 分支，复用 spo2_low 的音频文件：
+```c
+case ALERT_TYPE_SPO2_LOW:     return "alarm_spo2_low";
+case ALERT_TYPE_SPO2_WARNING: return "alarm_spo2_low";  // 复用
+```
+
+**涉及文件**：`components/services/alarm_manager/alarm_manager.c`
+
+---
+
+## ISSUE-021：VOICE_CMD_CALL_FAMILY 双重音频播放竞争
+
+**发现日期**：2026-02-18
+
+**原因**：
+`voice_cmd.c` 的 `handle_command_response(VOICE_CMD_CALL_FAMILY)` 中，`alarm_trigger(ALERT_TYPE_CALL_FAMILY, NULL)` 内部通过 `alarm_audio_play_async()` 启动异步任务播放 "call_family.wav"。紧接着又直接调用 `audio_play_wav("call_family")`，导致两个调用者竞争 I2S TX 互斥锁：异步任务先获取锁播放，直接调用阻塞等待最多 5 秒后再次播放同一文件。
+
+**后果**：
+- "呼叫家人" 语音被播放两次（或第二次超时失败）
+- I2S 资源被不必要地长时间占用
+
+**解决方案**：
+移除冗余的直接 `audio_play_wav("call_family")` 调用，改为 `alarm_trigger()` + `wait_audio_finish()`：
+```c
+case VOICE_CMD_CALL_FAMILY:
+    alarm_trigger(ALERT_TYPE_CALL_FAMILY, NULL);
+    wait_audio_finish();  // 等待异步音频完成
+    break;
+```
+
+**涉及文件**：`components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-022：VOICE_CMD_HELP 触发后 I2S 资源竞争
+
+**发现日期**：2026-02-18
+
+**原因**：
+`voice_cmd.c` 的 `handle_command_response(VOICE_CMD_HELP)` 中，`alarm_trigger(ALERT_TYPE_MANUAL, NULL)` 启动异步音频任务播放 "alarm_help.wav"。由于 `alarm_trigger` 是非阻塞的，函数立即返回，随后 `resume_feed_task()` 被调用，feed 任务尝试 `audio_i2s_acquire_rx()` 重新获取 I2S RX。但此时异步音频任务可能仍持有 I2S TX（共享引脚），导致 feed 任务阻塞等待。
+
+**后果**：
+- feed 任务阻塞最多 5 秒等待 I2S 资源
+- 语音识别在此期间中断（AFE 无新数据输入）
+- 系统最终能恢复，但存在功能降级窗口
+
+**解决方案**：
+在 `alarm_trigger()` 后添加 `wait_audio_finish()` 等待异步音频播放完成，再执行 `resume_feed_task()`：
+```c
+case VOICE_CMD_HELP:
+    alarm_trigger(ALERT_TYPE_MANUAL, NULL);
+    wait_audio_finish();  // 等待异步音频完成后再恢复 feed
+    break;
+```
+
+**涉及文件**：`components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-023：vc_feed 任务栈溢出（ESP-SR AFE feed 调用链过深）
+
+**发现日期**：2026-02-18
+
+**原因**：
+`voice_cmd.c` 中 `vc_feed` 任务的栈大小设置为 4096 字节，但 ESP-SR AFE 的 `s_afe_iface->feed()` 函数内部调用链较深（包含信号处理、噪声抑制等操作），实际栈使用超过 4096 字节。
+
+**后果**：
+- 系统运行时触发 `vApplicationStackOverflowHook`，打印 `A stack overflow in task vc_feed has been detected`
+- ESP32-S3 进入 panic 并重启，语音识别功能完全不可用
+
+**解决方案**：
+将 `vc_feed` 任务栈从 4096 增大到 8192 字节（与 `vc_detect` 任务一致）：
+```c
+BaseType_t ok = xTaskCreatePinnedToCore(
+    feed_task,
+    "vc_feed",
+    8192,    // 原 4096，ESP-SR AFE feed 调用链需要更大栈空间
+    NULL, 5, &s_feed_task, 0);
+```
+
+**涉及文件**：`components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-024：上电电流噪声 — RX 模式下 MAX98357A DIN 悬空
+
+**发现日期**：2026-02-18
+
+**原因**：
+INMP441 和 MAX98357A 共用 BCLK(GPIO17) 和 WS(GPIO16)。系统启动后 `voice_cmd_start()` 立即获取 I2S RX，I2S 主模式持续输出时钟信号。但 `audio_i2s_acquire_rx()` 将 DOUT(GPIO18) 设为 `I2S_GPIO_UNUSED`，该引脚处于浮空状态。MAX98357A 在有时钟但 DIN 随机的情况下，将随机电平解码为音频数据输出。
+
+**后果**：
+- 扬声器一通电就持续输出电流噪声
+- 噪声在语音识别运行期间始终存在
+
+**解决方案**：
+在 `audio_i2s_acquire_rx()` 末尾和 `audio_i2s_release()`（TX模式释放后）主动将 DOUT(GPIO18) 配置为 GPIO 输出并拉低，使 MAX98357A 接收全零数据（静音）：
+```c
+gpio_set_direction(AUDIO_DOUT_GPIO, GPIO_MODE_OUTPUT);
+gpio_set_level(AUDIO_DOUT_GPIO, 0);
+```
+
+**涉及文件**：`components/drivers/audio/audio_player.c`
+
+---
+
+## ISSUE-025：语音播报链路与常驻识别互斥 — alarm_manager 不经过 pause/resume
+
+**发现日期**：2026-02-18
+
+**原因**：
+`alarm_manager.c` 的 `alarm_audio_play_async()` 创建异步任务直接调用 `audio_play_wav()`，该函数内部的 `audio_i2s_acquire_tx()` 尝试获取 I2S mutex。但 `voice_cmd.c` 的 feed_task 长期持有 I2S RX（占用 mutex），且 alarm_manager 未调用 `pause_feed_task()` 暂停 feed_task。导致 TX acquire 超时（5秒），报警/TTS 播报失败。
+
+**后果**：
+- 有语音识别运行时，报警播报和 TTS 查询播报大概率失败
+- I2S 资源无法从 RX 切换到 TX
+
+**解决方案**：
+1. 在 `audio_i2s_acquire_tx()` 中添加 pre-hook 调用机制，在尝试获取 mutex 之前自动调用已注册的钩子函数
+2. 在 `audio_i2s_release()` 中（TX 模式释放后）添加 post-hook 调用
+3. `voice_cmd_init()` 中注册 `pause_feed_task/resume_feed_task` 为钩子
+4. `pause_feed_task/resume_feed_task` 添加引用计数，支持嵌套调用（手动 + hook 共存）
+
+**涉及文件**：
+- `components/drivers/audio/include/audio_player.h`
+- `components/drivers/audio/audio_player.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-026：wait_audio_finish() 竞态窗口 — 异步播放未开始即返回
+
+**发现日期**：2026-02-18
+
+**原因**：
+`voice_cmd.c` 的 `handle_command_response()` 中调用 `alarm_trigger()` 后使用 `wait_audio_finish()` 等待异步音频完成。`wait_audio_finish()` 依赖 `audio_is_playing()` 检查 `s_playing` 标志，但 `s_playing` 在 `audio_play_wav()` 内部才被置 true。如果异步任务尚未调度执行，`s_playing` 仍为 false，导致提前返回。
+
+**后果**：
+- feed_task 被过早恢复，抢占 I2S RX
+- 异步音频任务随后尝试 acquire TX 时可能与 feed_task 竞争
+
+**解决方案**：
+1. 新增 `audio_play_wav_async()` API，在创建异步任务前预设 `s_playing = true`
+2. 新增 `audio_wait_done()` API，基于 EventGroup 等待完成事件
+3. `alarm_manager.c` 改用 `audio_play_wav_async()`
+4. `voice_cmd.c` 改用 `audio_wait_done(10000)`
+
+**涉及文件**：
+- `components/drivers/audio/include/audio_player.h`
+- `components/drivers/audio/audio_player.c`
+- `components/services/alarm_manager/alarm_manager.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-027：INMP441 采样参数不匹配 — 16bit slot 导致 BCLK 低于规格
+
+**发现日期**：2026-02-18
+
+**原因**：
+`audio_i2s_acquire_rx()` 配置 I2S RX 为 16bit slot、mono 模式，BCLK = 16000 * 16 * 2 = 512 kHz。INMP441 数据手册规定 BCLK 最低频率为 1.024 MHz。低于规格的 BCLK 导致 INMP441 数据输出与 I2S 帧对齐错误，且 24bit 输出被截断。
+
+**后果**：
+- 麦克风采集的 PCM 数据存在位对齐错误
+- WakeNet/MultiNet 语音识别率降低
+
+**解决方案**：
+1. `audio_i2s_acquire_rx()` 的 slot 配置改为 `I2S_DATA_BIT_WIDTH_32BIT`（BCLK = 1.024 MHz）
+2. `voice_cmd.c` 的 `feed_task` 读取 32bit 样本后右移 16 位转 16bit 再 feed 给 AFE
+
+**涉及文件**：
+- `components/drivers/audio/audio_player.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-028：初始化失败未 fail-fast — 语音模块"看起来在运行但不可用"
+
+**发现日期**：2026-02-18
+
+**原因**：
+`main.c` 中 `audio_player_init()` 失败后仅记录日志，仍继续初始化 `voice_cmd`。voice_cmd 依赖 audio_player 的 I2S mutex 和 SPIFFS，无法正常工作。
+
+**后果**：
+- 系统启动后语音识别任务运行但功能不可用
+- 难以定位问题根源
+
+**解决方案**：
+用 `audio_ok` 标志记录结果，`audio_ok == false` 时跳过 voice_cmd 初始化。
+
+**涉及文件**：`main/main.c`
+
+---
+
+## ISSUE-029：PROGRESS.md 3.2/3.3 进度状态偏乐观
+
+**发现日期**：2026-02-18
+
+**原因**：
+迭代 3.2/3.3 标记为"已完成"，但验收仅为代码审查，缺乏实机闭环验证。实际存在 ISSUE-024 ~ ISSUE-028 等结构性问题。
+
+**后果**：
+- 项目进度跟踪失真
+
+**解决方案**：
+将 3.2/3.3 状态改为"代码重构中（待实机验收）"。
+
+**涉及文件**：`PROGRESS.md`
+
+---
