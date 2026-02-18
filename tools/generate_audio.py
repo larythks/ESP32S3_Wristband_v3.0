@@ -17,7 +17,7 @@ import shutil
 
 # 配置
 VOICE = "zh-CN-XiaoxiaoNeural"  # 微软晓晓
-RATE = "+0%"                    # 语速
+RATE = "-15%"                    # 语速
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "spiffs_data")
 TEMP_DIR = os.path.join(os.path.dirname(__file__), "temp_audio")
 
@@ -25,7 +25,7 @@ TEMP_DIR = os.path.join(os.path.dirname(__file__), "temp_audio")
 AUDIO_FILES = [
     # --- 1. 报警类 (固定语句) ---
     ("alarm_help",          "我需要帮助"),
-    ("alarm_fall",          "检测到跌倒"),
+    ("alarm_fall",          "检测到跌倒，五秒后呼叫家人"),
     ("alarm_temp_high",     "环境温度过高"),
     ("alarm_temp_low",      "环境温度过低"),
     ("alarm_hr_high",       "心率过高"),
@@ -38,10 +38,10 @@ AUDIO_FILES = [
     ("call_family",         "正在呼叫家人"),
     
     # --- 3. 数值播报前缀 ---
-    ("prefix_hr",           "当前心率"),
-    ("prefix_steps",        "当前步数"),
-    ("prefix_temp",         "当前环境温度"),
-    ("prefix_spo2",         "当前血氧"),
+    ("prefix_hr",           "当前心率为"),
+    ("prefix_steps",        "当前步数为"),
+    ("prefix_temp",         "当前环境温度为"),
+    ("prefix_spo2",         "当前血氧为"),
     
     # --- 4. 单位 ---
     ("unit_bpm",            "次每分钟"),
