@@ -555,3 +555,27 @@ rtc_time.day_of_week = dow;
 
 **涉及文件**：
 - `components/ble_gatt/ble_service.c`
+
+---
+
+## ISSUE-019：Timer Service 任务负载过重（报警与灯效定时器）
+
+**发现日期**：2026-02-18
+
+**原因**：
+`alarm_manager` 的软件定时器回调运行在 Timer Service 任务上下文内，旧实现使用 `xSemaphoreTake(..., pdMS_TO_TICKS(100))`，在竞争时会阻塞最多 100ms；回调触发状态切换后还会间接执行 BLE 通知和 WS2812 控制。`ws2812` 旧实现同样通过软件定时器回调执行闪烁，而回调内部 `ws2812_send_rgb()` 包含 `rmt_tx_wait_all_done(..., 100)` 阻塞等待。两处叠加导致 Timer Service 任务负担偏重。
+
+**后果**：
+- `PRE_ALARM` / `ACKED` 超时状态切换可能出现抖动或延迟。
+- 系统忙时 LED 闪烁稳定性下降，定时器命令队列存在背压风险。
+
+**解决方案**：
+1. 将 WS2812 闪烁机制从软件定时器回调迁移为独立任务 `ws2812_blink_task`，由任务周期性执行亮灭和 RMT 发送。
+2. 新增 WS2812 互斥锁保护闪烁参数；`ws2812_blink_start/stop` 仅更新状态并通过 `xTaskNotifyGive()` 唤醒任务。
+3. 将 `alarm_manager` 的 `pre_alarm_timer_cb/acked_timer_cb` 改为非阻塞拿锁（`xSemaphoreTake(..., 0)`）；拿锁失败时使用 `xTimerChangePeriod(..., TIMER_RETRY_MS)` 短延时重试，避免阻塞 Timer Service。
+4. 增加 tick 下限保护，避免极小闪烁周期退化为忙等。
+
+**涉及文件**：
+- `components/services/alarm_manager/alarm_manager.c`
+- `components/drivers/ws2812/ws2812.c`
+- `components/drivers/ws2812/include/ws2812.h`

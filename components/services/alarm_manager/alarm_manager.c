@@ -27,6 +27,7 @@ static const char *TAG = "alarm_mgr";
 #define ACKED_TIMEOUT_MS        2000    /* ACKED 状态持续 2 秒后回 IDLE */
 #define BLINK_YELLOW_INTERVAL   500     /* PRE_ALARM 黄色闪烁间隔 */
 #define BLINK_RED_INTERVAL      200     /* ALARMING 红色快闪间隔 */
+#define TIMER_RETRY_MS          50      /* 定时器回调拿锁失败时短暂重试 */
 
 /* ============== 内部状态 ============== */
 
@@ -158,23 +159,27 @@ static void publish_alarm_state_event(void)
     event_publish(EVT_ALARM_STATE, &evt);
 }
 
-/* ============== 定时器回调 (仅设标志，符合 CLAUDE.md 规则) ============== */
+/* ============== 定时器回调 ============== */
 
 /**
  * PRE_ALARM 倒计时到期 -> 升级到 ALARMING
- * 注意: 定时器回调运行在 Timer Service 任务上下文，
- * 这里直接操作状态机，需要加锁。由于操作较轻量
- * (互斥锁 + WS2812 RMT + BLE notify)，可接受。
- * 如果栈不够，应增大 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH。
+ * 注意: 定时器回调运行在 Timer Service 任务上下文。
+ * 为避免阻塞定时器任务，这里采用非阻塞拿锁；失败后短延时重试。
  */
 static void pre_alarm_timer_cb(TimerHandle_t timer)
 {
-    if (xSemaphoreTake(s_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (xSemaphoreTake(s_ctx.mutex, 0) == pdTRUE) {
         if (s_ctx.state == ALARM_STATE_PRE_ALARM) {
             ESP_LOGW(TAG, "Pre-alarm timeout, escalating to ALARMING");
             enter_state(ALARM_STATE_ALARMING);
         }
         xSemaphoreGive(s_ctx.mutex);
+        return;
+    }
+
+    /* Keep timer callback non-blocking: retry shortly instead of waiting in timer task. */
+    if (xTimerChangePeriod(timer, pdMS_TO_TICKS(TIMER_RETRY_MS), 0) != pdPASS) {
+        ESP_LOGW(TAG, "pre_alarm retry schedule failed");
     }
 }
 
@@ -183,12 +188,17 @@ static void pre_alarm_timer_cb(TimerHandle_t timer)
  */
 static void acked_timer_cb(TimerHandle_t timer)
 {
-    if (xSemaphoreTake(s_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (xSemaphoreTake(s_ctx.mutex, 0) == pdTRUE) {
         if (s_ctx.state == ALARM_STATE_ACKED) {
             ESP_LOGI(TAG, "ACKED timeout, returning to IDLE");
             enter_state(ALARM_STATE_IDLE);
         }
         xSemaphoreGive(s_ctx.mutex);
+        return;
+    }
+
+    if (xTimerChangePeriod(timer, pdMS_TO_TICKS(TIMER_RETRY_MS), 0) != pdPASS) {
+        ESP_LOGW(TAG, "acked retry schedule failed");
     }
 }
 

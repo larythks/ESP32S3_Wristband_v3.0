@@ -3,7 +3,7 @@
  * @brief WS2812 RGB LED driver header
  *
  * Uses ESP32-S3 RMT peripheral to drive a single WS2812 LED on GPIO48.
- * Provides color setting and blink functionality via FreeRTOS software timer.
+ * Provides color setting and blink functionality via a FreeRTOS task.
  */
 
 #ifndef __WS2812_H__
