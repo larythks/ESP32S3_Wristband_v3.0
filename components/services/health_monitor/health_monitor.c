@@ -14,7 +14,7 @@ static const char *TAG = "health_monitor";
 // ============== 内部常量 ==============
 
 #define PPG_BUFFER_SIZE         100     // PPG 数据缓冲区大小
-#define TEMP_FILTER_SIZE        5       // 体温滑动平均窗口
+#define TEMP_FILTER_SIZE        5       // 环境温度滑动平均窗口
 #define HR_CALC_INTERVAL_MS     1000    // 心率计算间隔
 
 // 峰值检测参数
@@ -53,7 +53,7 @@ typedef struct {
 } ppg_context_t;
 
 /**
- * @brief 体温监测上下文
+ * @brief 环境温度监测上下文
  */
 typedef struct {
     float filter_buffer[TEMP_FILTER_SIZE];
@@ -119,7 +119,7 @@ esp_err_t health_monitor_init(void)
     }
 
     memset(&s_ctx, 0, sizeof(s_ctx));
-    s_ctx.temp.last_valid_temp = 36.5f;  // 默认体温
+    s_ctx.temp.last_valid_temp = 25.0f;  // 默认环境温度
 
     ESP_LOGI(TAG, "Health monitor initialized");
     s_ctx.initialized = true;
@@ -191,7 +191,7 @@ static void on_sensor_data(const event_t *event, void *user_data)
     const sensor_data_t *data = &event->data.sensor;
     uint32_t timestamp = data->timestamp;
 
-    // 处理体温数据
+    // 处理环境温度数据
     if (data->temperature > 0) {
         process_temp_data(data->temperature, timestamp);
     }
@@ -255,7 +255,7 @@ static void on_sensor_data(const event_t *event, void *user_data)
     check_alerts(timestamp);
 }
 
-// ============== 体温处理 ==============
+// ============== 环境温度处理 ==============
 
 static void process_temp_data(float temp, uint32_t timestamp)
 {
@@ -476,7 +476,7 @@ static void check_alerts(uint32_t timestamp)
     alert_level_t new_level = ALERT_LEVEL_NONE;
     int16_t alert_value = 0;
 
-    // 1. 体温告警检查 (连续3次越阈)
+    // 1. 环境温度告警检查 (连续3次越阈)
     if (s_ctx.temp.high_count >= TEMP_ALARM_COUNT) {
         new_alert = ALERT_TYPE_TEMP_HIGH;
         new_level = ALERT_LEVEL_ALARM;

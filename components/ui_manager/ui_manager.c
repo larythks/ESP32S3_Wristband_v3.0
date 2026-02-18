@@ -22,7 +22,7 @@
 static const char *TAG = "ui_manager";
 
 /* 定时刷新定时器 */
-static TimerHandle_t s_refresh_timer = NULL;      // 2分钟：心率/血氧/体温
+static TimerHandle_t s_refresh_timer = NULL;      // 2分钟：心率/血氧/环境温度
 static TimerHandle_t s_step_refresh_timer = NULL;  // 500ms：步数
 static SemaphoreHandle_t s_ui_mutex = NULL;        // UI 绘制互斥锁
 
@@ -286,7 +286,7 @@ static void ui_exit_manual_measure_locked(void)
 }
 
 /**
- * @brief 定时刷新回调函数（2分钟，心率/血氧/体温整页刷新）
+ * @brief 定时刷新回调函数（2分钟，心率/血氧/环境温度整页刷新）
  */
 static void refresh_timer_callback(TimerHandle_t timer)
 {

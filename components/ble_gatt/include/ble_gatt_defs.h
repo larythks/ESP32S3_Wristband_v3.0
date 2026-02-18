@@ -120,8 +120,8 @@ _Static_assert(sizeof(ble_alarm_t) == 16,
  */
 typedef enum {
     BLE_ALARM_TYPE_NONE         = 0,
-    BLE_ALARM_TYPE_TEMP_HIGH    = 1,    /* 体温过高 */
-    BLE_ALARM_TYPE_TEMP_LOW     = 2,    /* 体温过低 */
+    BLE_ALARM_TYPE_TEMP_HIGH    = 1,    /* 环境温度过高 */
+    BLE_ALARM_TYPE_TEMP_LOW     = 2,    /* 环境温度过低 */
     BLE_ALARM_TYPE_HR_HIGH      = 3,    /* 心率过高 */
     BLE_ALARM_TYPE_HR_LOW       = 4,    /* 心率过低 */
     BLE_ALARM_TYPE_SPO2_LOW     = 5,    /* 血氧过低 */

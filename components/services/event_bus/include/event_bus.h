@@ -56,7 +56,7 @@ typedef enum {
  * @brief 传感器类型标志位
  */
 typedef enum {
-    SENSOR_TEMP     = (1 << 0),  // 体温传感器
+    SENSOR_TEMP     = (1 << 0),  // 环境温度传感器
     SENSOR_HR_SPO2  = (1 << 1),  // 心率血氧传感器
     SENSOR_IMU      = (1 << 2),  // IMU 传感器
     SENSOR_ALL      = 0x07       // 所有传感器
@@ -66,7 +66,7 @@ typedef enum {
  * @brief 传感器数据结构
  */
 typedef struct {
-    float temperature;      // 体温 (°C)
+    float temperature;      // 环境温度 (°C)
     uint8_t heart_rate;     // 心率 (bpm)
     uint8_t spo2;           // 血氧 (%)
     int16_t accel_x;        // 加速度 X
@@ -106,8 +106,8 @@ typedef enum {
  */
 typedef enum {
     ALERT_TYPE_NONE = 0,
-    ALERT_TYPE_TEMP_HIGH,       // 体温过高
-    ALERT_TYPE_TEMP_LOW,        // 体温过低
+    ALERT_TYPE_TEMP_HIGH,       // 环境温度过高
+    ALERT_TYPE_TEMP_LOW,        // 环境温度过低
     ALERT_TYPE_HR_HIGH,         // 心率过高
     ALERT_TYPE_HR_LOW,          // 心率过低
     ALERT_TYPE_SPO2_LOW,        // 血氧过低

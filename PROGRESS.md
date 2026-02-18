@@ -710,3 +710,27 @@
   - 对应问题记录：ISSUE-017
 
 ---
+
+## 2026-02-18 体温监测改为环境温度监测
+
+- **完成日期**: 2026-02-18
+- **任务简述**: 将项目中所有"体温监测"概念改为"环境温度监测"，高温报警阈值从 37.8°C 改为 35.0°C，低温阈值保持 20.0°C 不变，sensor_service 滞回阈值从 37.5/37.3 改为 34.8/34.5，默认温度从 36.5 改为 25.0（室温）
+- **对应开发计划**: 全局需求变更（影响迭代 1.3 DS18B20 驱动、迭代 2.2 健康监测服务）
+- **修改文件列表**:
+  - `development_plan.md` — 所有"体温"改为"环境温度"，阈值更新
+  - `components/services/health_monitor/include/health_monitor.h` — TEMP_ALARM_HIGH 从 37.8 改为 35.0，注释更新
+  - `components/services/sensor_service/include/sensor_service.h` — 高温阈值 37.5/37.3 改为 34.8/34.5，注释更新
+  - `components/services/health_monitor/health_monitor.c` — 默认温度从 36.5 改为 25.0，注释更新
+  - `components/services/event_bus/include/event_bus.h` — 注释"体温"改为"环境温度"
+  - `components/ble_gatt/include/ble_gatt_defs.h` — 注释"体温"改为"环境温度"
+  - `components/ui_manager/ui_manager.c` — 注释"体温"改为"环境温度"
+- **验收状态**: 待验收
+- **验收方法**:
+  - [x] `idf.py build` 编译通过
+  - [ ] 实际烧录验证温度阈值报警逻辑
+- **备注**:
+  - 变量名 `temperature`、`TEMP_xxx` 等保持不变（TEMP 通用表示温度）
+  - BLE 协议中 alarm_type 数值编号不变，仅注释变化
+  - 算法逻辑（滑动平均、连续触发、异步采样状态机）完全不变
+
+---
