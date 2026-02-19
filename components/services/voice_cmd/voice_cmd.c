@@ -26,6 +26,7 @@
 #include "alarm_manager.h"
 #include "health_monitor.h"
 #include "pedometer.h"
+#include "ds3231.h"
 
 #include "esp_afe_sr_iface.h"
 #include "esp_afe_sr_models.h"
@@ -195,6 +196,14 @@ static void handle_command_response(voice_cmd_id_t cmd)
         health_status_t status = health_get_status();
         ESP_LOGD(TAG, "Response: temperature = %.1f C", status.temperature);
         tts_speak_temperature(status.temperature);
+        break;
+    }
+
+    case VOICE_CMD_QUERY_TIME: {
+        ds3231_time_t rtc_time = {0};
+        ds3231_get_time(&rtc_time);
+        ESP_LOGD(TAG, "Response: time = %02u:%02u", rtc_time.hour, rtc_time.minute);
+        tts_speak_time(rtc_time.hour, rtc_time.minute);
         break;
     }
 

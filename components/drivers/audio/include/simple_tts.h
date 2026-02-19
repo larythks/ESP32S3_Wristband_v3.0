@@ -53,6 +53,13 @@ esp_err_t tts_speak_steps(uint32_t steps);
  */
 esp_err_t tts_speak_temperature(float temp);
 
+/**
+ * @brief Speak current time: "当前时间为 XX 点 XX"
+ * @param hour    Hour (0-23)
+ * @param minute  Minute (0-59)
+ */
+esp_err_t tts_speak_time(uint8_t hour, uint8_t minute);
+
 #ifdef __cplusplus
 }
 #endif

@@ -907,3 +907,23 @@
   - 对应问题记录：ISSUE-033
   - 逐页加锁保证每页 3 条命令 + 128 字节数据在同一个锁内完成，不会出现页内撕裂
 
+---
+
+### 2026-02-19 - 功能补充："查询时间"语音命令响应
+
+- **迭代**: Week 3 - 迭代 3.3 功能补充
+- **状态**: ✅ 已完成（待实机验收）
+- **任务简述**: 补充"查询时间"语音命令的 TTS 响应，识别后播报当前 RTC 时间
+- **修改文件**:
+  - `components/drivers/audio/include/simple_tts.h`（新增 `tts_speak_time` 声明）
+  - `components/drivers/audio/simple_tts.c`（实现 `tts_speak_time`：prefix_time + 小时 + time_dot + 分钟）
+  - `components/services/voice_cmd/voice_cmd.c`（添加 `VOICE_CMD_QUERY_TIME` case + `#include "ds3231.h"`）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0xf8400，app 分区 84% 空闲）
+  - [ ] 实机说"查询时间"后播报当前时间（如"当前时间为 十四 点 三十五"）
+  - [ ] 分钟 < 10 时补零播报（如"十点零五"）
+  - [ ] RTC 读取失败时播放降级提示音
+- **备注**:
+  - 语音命令拼音注册和枚举映射在迭代 3.3 中已完成，本次仅补充响应逻辑和 TTS 函数
+

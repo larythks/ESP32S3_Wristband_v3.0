@@ -178,3 +178,36 @@ esp_err_t tts_speak_temperature(float temp)
     ret = audio_play_wav("unit_degree");
     return ret;
 }
+
+esp_err_t tts_speak_time(uint8_t hour, uint8_t minute)
+{
+    ESP_LOGD(TAG, "Speaking time: %02u:%02u", hour, minute);
+    esp_err_t ret;
+
+    /* "当前时间为" */
+    ret = audio_play_wav("prefix_time");
+    if (ret != ESP_OK) return ret;
+
+    /* Hour number */
+    ret = tts_speak_number(hour);
+    if (ret != ESP_OK) return ret;
+
+    /* "点" */
+    ret = audio_play_wav("num_dot");
+    if (ret != ESP_OK) return ret;
+
+    /* Minute: 0 → "零", 1~9 → "零X", 10~59 → normal */
+    if (minute == 0) {
+        ret = play_digit(0);
+    } else if (minute < 10) {
+        ret = play_digit(0);
+        if (ret != ESP_OK) return ret;
+        ret = play_digit(minute);
+    } else {
+        ret = tts_speak_number(minute);
+    }
+    if (ret != ESP_OK) return ret;
+    
+    ret = audio_play_wav("unit_minute");
+    return ret;
+}

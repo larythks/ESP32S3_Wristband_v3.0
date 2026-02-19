@@ -49,7 +49,7 @@ AUDIO_FILES = [
     ("unit_steps",          "步"),
     ("unit_degree",         "摄氏度"),
     ("unit_percent",        "百分之"),
-    ("time_dot",            "点"),  # 用于时间 "3点45"
+    ("unit_minute",         "分"),
     
     # --- 5. 数字 (0-10, 100) ---
     ("num_0",               "零"),
