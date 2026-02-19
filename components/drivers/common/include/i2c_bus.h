@@ -70,6 +70,18 @@ esp_err_t i2c_bus_write_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t data);
  */
 esp_err_t i2c_bus_read_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data);
 
+/**
+ * @brief 获取 I2C 总线互斥锁（用于需要多次 I2C 操作保持原子性的场景）
+ * @param timeout_ms 等待超时 (ms)
+ * @return ESP_OK 成功获取锁
+ */
+esp_err_t i2c_bus_lock(uint32_t timeout_ms);
+
+/**
+ * @brief 释放 I2C 总线互斥锁
+ */
+void i2c_bus_unlock(void);
+
 #ifdef __cplusplus
 }
 #endif

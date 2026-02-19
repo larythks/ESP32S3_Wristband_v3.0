@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 // 常规采样间隔 (ms)
-#define SENSOR_TEMP_NORMAL_INTERVAL     30000   // 体温: 30秒
+#define SENSOR_TEMP_NORMAL_INTERVAL     30000   // 环境温度: 30秒
 #define SENSOR_HR_NORMAL_INTERVAL       120000  // 心率血氧: 120秒
 #define SENSOR_IMU_NORMAL_INTERVAL      20      // IMU: 50Hz (20ms)
 
@@ -27,9 +27,9 @@ extern "C" {
 // 实时采样间隔 (ms)
 #define SENSOR_REALTIME_INTERVAL        1000    // 实时模式: 1秒
 
-// 温度异常阈值 (摄氏度)
-#define SENSOR_TEMP_HIGH_ALERT_THRESHOLD    37.5f   // 高温异常阈值
-#define SENSOR_TEMP_HIGH_NORMAL_THRESHOLD   37.3f   // 高温恢复阈值
+// 环境温度异常阈值 (摄氏度)
+#define SENSOR_TEMP_HIGH_ALERT_THRESHOLD    34.8f   // 高温异常阈值
+#define SENSOR_TEMP_HIGH_NORMAL_THRESHOLD   34.5f   // 高温恢复阈值
 // #define SENSOR_TEMP_LOW_ALERT_THRESHOLD     35.0f   // 低温异常阈值
 // #define SENSOR_TEMP_LOW_NORMAL_THRESHOLD    35.2f   // 低温恢复阈值
 #define SENSOR_TEMP_LOW_ALERT_THRESHOLD     20.0f   // 低温异常阈值

@@ -36,8 +36,8 @@ static uint8_t s_buffer[SH1106_WIDTH * SH1106_PAGES];
 static void sh1106_draw_filled_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t color);
 static void sh1106_draw_large_char(int16_t x, int16_t y, char c, uint8_t color);
 
-// 写命令
-static esp_err_t sh1106_write_cmd(uint8_t cmd)
+// 写命令（内部无锁版本，调用方需自行持有 I2C 总线锁）
+static esp_err_t sh1106_write_cmd_nolock(uint8_t cmd)
 {
     uint8_t data[2] = {0x00, cmd};  // Co=0, D/C#=0 (command)
     i2c_cmd_handle_t handle = i2c_cmd_link_create();
@@ -47,6 +47,15 @@ static esp_err_t sh1106_write_cmd(uint8_t cmd)
     i2c_master_stop(handle);
     esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, handle, pdMS_TO_TICKS(100));
     i2c_cmd_link_delete(handle);
+    return ret;
+}
+
+// 写命令（加锁版本，供单条命令使用）
+static esp_err_t sh1106_write_cmd(uint8_t cmd)
+{
+    i2c_bus_lock(200);
+    esp_err_t ret = sh1106_write_cmd_nolock(cmd);
+    i2c_bus_unlock();
     return ret;
 }
 
@@ -126,9 +135,13 @@ void sh1106_fill(uint8_t color)
 void sh1106_update(void)
 {
     for (uint8_t page = 0; page < SH1106_PAGES; page++) {
-        sh1106_write_cmd(SH1106_CMD_SET_PAGE_ADDR | page);
-        sh1106_write_cmd(SH1106_CMD_SET_LOW_COLUMN | 0x02);  // SH1106偏移2列
-        sh1106_write_cmd(SH1106_CMD_SET_HIGH_COLUMN | 0x00);
+        if (i2c_bus_lock(200) != ESP_OK) {
+            break;
+        }
+
+        sh1106_write_cmd_nolock(SH1106_CMD_SET_PAGE_ADDR | page);
+        sh1106_write_cmd_nolock(SH1106_CMD_SET_LOW_COLUMN | 0x02);  // SH1106偏移2列
+        sh1106_write_cmd_nolock(SH1106_CMD_SET_HIGH_COLUMN | 0x00);
 
         // 写入一页数据
         i2c_cmd_handle_t handle = i2c_cmd_link_create();
@@ -139,6 +152,8 @@ void sh1106_update(void)
         i2c_master_stop(handle);
         i2c_master_cmd_begin(I2C_NUM_0, handle, pdMS_TO_TICKS(100));
         i2c_cmd_link_delete(handle);
+
+        i2c_bus_unlock();
     }
 }
 

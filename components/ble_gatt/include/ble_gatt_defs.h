@@ -120,14 +120,14 @@ _Static_assert(sizeof(ble_alarm_t) == 16,
  */
 typedef enum {
     BLE_ALARM_TYPE_NONE         = 0,
-    BLE_ALARM_TYPE_TEMP_HIGH    = 1,    /* 体温过高 */
-    BLE_ALARM_TYPE_TEMP_LOW     = 2,    /* 体温过低 */
+    BLE_ALARM_TYPE_TEMP_HIGH    = 1,    /* 环境温度过高 */
+    BLE_ALARM_TYPE_TEMP_LOW     = 2,    /* 环境温度过低 */
     BLE_ALARM_TYPE_HR_HIGH      = 3,    /* 心率过高 */
     BLE_ALARM_TYPE_HR_LOW       = 4,    /* 心率过低 */
     BLE_ALARM_TYPE_SPO2_LOW     = 5,    /* 血氧过低 */
     BLE_ALARM_TYPE_FALL         = 6,    /* 跌倒 */
     BLE_ALARM_TYPE_MANUAL       = 7,    /* 手动报警 */
-    BLE_ALARM_TYPE_SPO2_WARNING = 8,    /* 血氧预警 (WARNING) */
+    BLE_ALARM_TYPE_RESERVED_8   = 8,    /* (原 SPO2_WARNING，已删除，保留编号) */
     BLE_ALARM_TYPE_CALL_FAMILY  = 9,    /* 呼叫家人 */
 } ble_alarm_type_t;
 
@@ -196,6 +196,9 @@ typedef enum {
 
 /** Telemetry 上报间隔 (ms) - 常规模式 2 分钟 */
 #define BLE_TELEMETRY_INTERVAL_MS   120000
+
+/** Telemetry 上报间隔 - 实时检测模式 (ms) */
+#define BLE_TELEMETRY_REALTIME_INTERVAL_MS   5000
 
 /** Telemetry 上报任务栈大小 */
 #define BLE_TELEMETRY_TASK_STACK    3072

@@ -6,6 +6,7 @@ idf_component_register(
         "pedometer/pedometer.c"
         "fall_detect/fall_detect.c"
         "alarm_manager/alarm_manager.c"
+        "voice_cmd/voice_cmd.c"
     INCLUDE_DIRS
         "event_bus/include"
         "sensor_service/include"
@@ -13,6 +14,7 @@ idf_component_register(
         "pedometer/include"
         "fall_detect/include"
         "alarm_manager/include"
-    REQUIRES freertos driver drivers esp_timer
+        "voice_cmd/include"
+    REQUIRES freertos driver drivers esp_timer espressif__esp-sr
     PRIV_REQUIRES ble_gatt
 )

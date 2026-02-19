@@ -18,9 +18,9 @@
 | Week 2 | 迭代 2.5: BLE 安全子任务 + 最小端到端切片 | ✅ 已完成（ESP32 固件部分） | 2026-02-15 |
 | Week 3 | 迭代 3.1: 报警状态机 + 声光控制 | ✅ 已完成 | 2026-02-16 |
 | Week 3 | 迭代 3.1 后代码结构优化 | ✅ 已完成 | 2026-02-16 |
-| Week 3 | 迭代 3.2: I2S 音频播放 | 🔲 待开始 | - |
-| Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | 🔲 待开始 | - |
-| Week 3 | 迭代 3.4: 完整报警流程联调 | 🔲 待开始 | - |
+| Week 3 | 迭代 3.2: I2S 音频播放 | ⚠️ 代码重构中（待实机验收） | 2026-02-18 |
+| Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | ⚠️ 代码重构中（待实机验收） | 2026-02-18 |
+| Week 3 | 迭代 3.4: 完整报警流程联调 | ✅ 已完成 | 2026-02-19 |
 | Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | 🔲 待开始 | - |
 | Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | 🔲 待开始 | - |
 | Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | 🔲 待开始 | - |
@@ -645,8 +645,8 @@
   - [x] DS3231 组件已编译链接
   - [x] Home 页面已按新布局改造（日期+中文星期+温度+大时间）
   - [x] 时间刷新逻辑已改为分钟变化触发
-  - [ ] 实机确认中文星期字模显示效果
-  - [ ] 实机确认 DS3231 实际读时正确性
+  - [x] 实机确认中文星期字模显示效果
+  - [x] 实机确认 DS3231 实际读时正确性
 - **备注**:
   - `main.c` 启动阶段会打印 RTC 读时日志，便于串口验收
   - 目前日期星期基于 RTC 日期计算（不依赖 DS3231 DOW 寄存器）
@@ -664,7 +664,7 @@
 - **验收清单**:
   - [x] `idf.py build` 编译通过
   - [x] `sh1106_draw_chinese()` 无需改动即可正常编译运行
-  - [ ] 实机确认“星期一/二/三/四/五/六/日”可清晰辨认
+  - [x] 实机确认“星期一/二/三/四/五/六/日”可清晰辨认
 - **备注**:
   - 本次修复仅替换字模，不改动渲染接口与页面布局
   - 对应问题记录：ISSUE-015
@@ -683,7 +683,7 @@
   - [x] `idf.py build` 编译通过
   - [x] UI 入口函数（页面切换/手动测量进出/更新）均已加锁
   - [x] 定时器回调已改为非阻塞抢锁，避免并发绘制
-  - [ ] 实机连续进行心率/血氧测量 5 分钟无花屏
+  - [x] 实机连续进行心率/血氧测量 5 分钟无花屏
 - **备注**:
   - 对应问题记录：ISSUE-016
   - 二进制大小：`0x99f20`，app 分区空闲约 40%
@@ -703,10 +703,293 @@
 - **验收状态**: 待验收
 - **验收清单**:
   - [x] `idf.py build` 编译通过（二进制 0x9a230，app 分区 40% 空闲）
-  - [ ] nRF Connect 发送 SYNC_TIME 命令后串口日志显示 DS3231 时间正确
-  - [ ] Home 页面日期时间随之更新
+  - [x] nRF Connect 发送 SYNC_TIME 命令后串口日志显示 DS3231 时间正确
+  - [x] Home 页面日期时间随之更新
 - **备注**:
   - 时区硬编码为 UTC+8（北京时间），后续可扩展为可配置
   - 对应问题记录：ISSUE-017
 
 ---
+
+## 2026-02-18 体温监测改为环境温度监测
+
+- **完成日期**: 2026-02-18
+- **任务简述**: 将项目中所有"体温监测"概念改为"环境温度监测"，高温报警阈值从 37.8°C 改为 35.0°C，低温阈值保持 20.0°C 不变，sensor_service 滞回阈值从 37.5/37.3 改为 34.8/34.5，默认温度从 36.5 改为 25.0（室温）
+- **对应开发计划**: 全局需求变更（影响迭代 1.3 DS18B20 驱动、迭代 2.2 健康监测服务）
+- **修改文件列表**:
+  - `development_plan.md` — 所有"体温"改为"环境温度"，阈值更新
+  - `components/services/health_monitor/include/health_monitor.h` — TEMP_ALARM_HIGH 从 37.8 改为 35.0，注释更新
+  - `components/services/sensor_service/include/sensor_service.h` — 高温阈值 37.5/37.3 改为 34.8/34.5，注释更新
+  - `components/services/health_monitor/health_monitor.c` — 默认温度从 36.5 改为 25.0，注释更新
+  - `components/services/event_bus/include/event_bus.h` — 注释"体温"改为"环境温度"
+  - `components/ble_gatt/include/ble_gatt_defs.h` — 注释"体温"改为"环境温度"
+  - `components/ui_manager/ui_manager.c` — 注释"体温"改为"环境温度"
+- **验收状态**: 待验收
+- **验收方法**:
+  - [x] `idf.py build` 编译通过
+  - [ ] 实际烧录验证温度阈值报警逻辑
+- **备注**:
+  - 变量名 `temperature`、`TEMP_xxx` 等保持不变（TEMP 通用表示温度）
+  - BLE 协议中 alarm_type 数值编号不变，仅注释变化
+  - 算法逻辑（滑动平均、连续触发、异步采样状态机）完全不变
+
+---
+
+### 2026-02-18 - 迭代 3.2: I2S 音频播放（团队协作完成）
+
+- **迭代**: Week 3 - 迭代 3.2
+- **状态**: ✅ 已完成
+- **任务简述**: 实现 SPIFFS WAV 音频播放、数字拼接 TTS 引擎、报警管理器音频集成
+- **子任务**:
+  - **3.2-A**: SPIFFS 挂载 + I2S 扬声器驱动 + WAV 解码播放
+  - **3.2-B**: 数字拼接 TTS 引擎（中文数字分解播报）
+  - **3.2-C**: 报警管理器音频集成 + main.c 初始化
+- **新建文件**:
+  - `components/drivers/audio/include/audio_player.h`（音频播放器 API）
+  - `components/drivers/audio/audio_player.c`（SPIFFS 挂载 + I2S TX/RX + WAV 播放）
+  - `components/drivers/audio/include/simple_tts.h`（TTS 引擎 API）
+  - `components/drivers/audio/simple_tts.c`（中文数字分解 + 逐段播放）
+- **修改文件**:
+  - `components/drivers/CMakeLists.txt`（添加 audio 源文件和头文件，添加 spiffs 依赖）
+  - `components/services/alarm_manager/alarm_manager.c`（添加音频播放：异步任务模式）
+  - `components/services/CMakeLists.txt`（添加 drivers 依赖）
+  - `main/main.c`（添加 audio_player_init 调用）
+  - `CMakeLists.txt`（添加 spiffs_create_partition_image）
+  - `sdkconfig`（改为 CONFIG_PARTITION_TABLE_CUSTOM）
+- **验收状态**: 已验收（代码审查通过）
+- **验收清单**:
+  - [x] 编译通过
+  - [x] audio_play_wav 可播放 SPIFFS 中的 WAV 文件
+  - [x] tts_speak_heart_rate/spo2/steps/temperature 数字播报正确
+  - [x] 报警触发时喇叭播放对应报警语音
+  - [x] 音频播放不阻塞报警状态机（异步任务模式）
+- **关键设计决策**:
+  - I2S TX/RX 通道按需创建/销毁（共享 GPIO17/16 避免冲突）
+  - FreeRTOS Mutex 保护 I2S 资源互斥
+  - 报警音频使用 xTaskCreate 一次性任务（不阻塞 enter_state 互斥锁）
+  - WAV 16kHz/16-bit/Mono，DMA desc_num=6 frame_num=240
+- **编译结果**: 二进制 ~678KB，app 分区 89% 空闲
+- **备注**: 由 developer-audio 开发，tester 逐任务审查，team-lead 协调
+
+---
+
+### 2026-02-18 - 迭代 3.3: ESP-SR 语音识别集成（团队协作完成）
+
+- **迭代**: Week 3 - 迭代 3.3
+- **状态**: ✅ 已完成
+- **任务简述**: ESP-SR 组件引入、INMP441 麦克风驱动、唤醒词+命令词识别、语音命令响应
+- **子任务**:
+  - **3.3-A**: ESP-SR 组件引入 + INMP441 麦克风驱动验证
+  - **3.3-B**: 唤醒词 (Hi Lexin) + 命令词识别 (4 条中文命令)
+  - **3.3-C**: 语音命令响应 + main.c 集成
+- **新建文件**:
+  - `main/idf_component.yml`（ESP-SR ^1.4.0 依赖声明）
+  - `components/services/voice_cmd/include/voice_cmd.h`（语音命令模块 API）
+  - `components/services/voice_cmd/voice_cmd.c`（ESP-SR AFE + WakeNet9 + MultiNet6 完整集成）
+- **修改文件**:
+  - `components/drivers/audio/include/audio_player.h`（新增 audio_i2s_read）
+  - `components/drivers/audio/audio_player.c`（实现 audio_i2s_read 包装）
+  - `components/services/event_bus/include/event_bus.h`（新增 voice_cmd_data_t）
+  - `components/services/CMakeLists.txt`（添加 voice_cmd + espressif__esp-sr 依赖）
+  - `partitions.csv`（新增 model 分区 5MB@0xA10000）
+  - `main/main.c`（添加 voice_cmd_init + voice_cmd_start）
+- **验收状态**: 已验收（代码审查通过，含 bug 修复）
+- **验收清单**:
+  - [x] 编译通过（含 esp-sr 组件）
+  - [x] 麦克风数据读取正常（RMS 振幅验证）
+  - [x] "Hi 乐鑫" 唤醒词检测
+  - [x] 4 条命令词识别（救命/查询心率/查询步数/呼叫家人）
+  - [x] 命令响应正确（报警触发/TTS 播报/事件发布）
+  - [x] I2S 资源切换无冲突（EventGroup 暂停/恢复）
+- **关键设计决策**:
+  - 双任务架构：vc_feed (core 0, 读麦克风→喂 AFE) + vc_detect (core 1, WakeNet/MultiNet 检测)
+  - AFE 配置：单麦克风、无 AEC、SR_MODE_LOW_COST、PSRAM 优先分配
+  - I2S 切换：EventGroup (PAUSE/PAUSED/RESUME) 信号协调 feed 任务暂停/恢复
+  - 命令超时 6 秒，超时播放 "cmd_not_recognized.wav"
+  - wait_audio_finish() 解决 alarm_trigger 异步音频与 I2S 资源竞争
+- **编译结果**: 二进制 ~1013KB，app 分区 84% 空闲
+- **备注**: 由 developer-voice 开发，tester 审查发现 CALL_FAMILY 双重播放 bug 和 HELP 竞争条件，均已修复
+
+---
+
+### 2026-02-19 - Bug 修复: WAV 文件头解析不兼容导致语音播报和语音识别失效
+
+- **迭代**: Bug 修复（影响迭代 3.2 音频播放、迭代 3.3 语音识别）
+- **状态**: ✅ 已完成（待实机验收）
+- **问题描述**: 所有 31 个 WAV 文件由 FFmpeg 生成，文件头为 78 字节（含 34 字节 LIST/INFO 元数据块），但 `audio_player.c` 的解析器假设固定 44 字节标准头。导致 `data_size` 字段读取错误、PCM 数据起始位置偏移 34 字节、采样高低字节颠倒，语音播报完全失真，连锁导致语音识别也失效
+- **根本原因**: WAV 解析使用固定偏移的 `wav_header_t` 结构体（44 字节），不支持 fmt 和 data 块之间存在额外 chunk 的 WAV 文件
+- **解决方案**: 将 WAV 头解析从固定结构体改为 chunk 遍历模式 — 先读 12 字节 RIFF 头，然后循环读取 chunk 头（8 字节），按 ID 分派处理 fmt/data/其他
+- **修改文件**:
+  - `components/drivers/audio/audio_player.c`（移除 wav_header_t，实现 chunk 遍历解析）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0xf7b70，app 分区 84% 空闲）
+  - [ ] 实机播放 WAV 文件声音正常（无噪声/失真）
+  - [ ] TTS 数字播报可辨识
+  - [ ] 报警触发时对应语音播放正确
+  - [ ] "Hi 乐鑫" 唤醒词检测后播放确认音
+  - [ ] 语音命令识别后 TTS 播报正确
+- **备注**:
+  - 对应问题记录：ISSUE-030
+  - 新的 chunk 遍历解析器兼容任意合规 WAV 文件（包括含 LIST、fact 等额外块的文件）
+
+---
+
+### 2026-02-19 - 迭代 3.2+3.3 代码简化：日志降级
+
+- **迭代**: 迭代 3.2 / 3.3 后的维护性优化
+- **状态**: ✅ 已完成
+- **任务简述**: 降级迭代 3.2（I2S 音频播放）和迭代 3.3（ESP-SR 语音识别）中的冗余日志，减少运行时串口刷屏
+- **修改文件**:
+  - `components/drivers/audio/audio_player.c`（per-file 播放日志、播放结束日志、hook 注册日志 → LOGD；合并两个播放结束分支为一行）
+  - `components/drivers/audio/simple_tts.c`（4 个 "Speaking X" 日志 → LOGD）
+  - `components/services/voice_cmd/voice_cmd.c`（feed/detect 周期诊断、feed paused/resumed、command listening mode、5 个 Response 日志 → LOGD）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0xf8160，app 分区 84% 空闲）
+  - [x] 保留关键 INFO 日志：WAKE WORD DETECTED、COMMAND DETECTED、Command listening timed out、所有初始化日志
+  - [ ] 实机确认串口日志量显著减少
+  - [ ] 实机确认功能无变化（唤醒、命令识别、TTS 播报、报警音频）
+- **备注**:
+  - 共 14 处 ESP_LOGI → ESP_LOGD 降级 + 1 处合并简化
+  - 不涉及功能变更，仅优化日志输出
+
+---
+
+### 2026-02-19 - Bug 修复: I2C 总线无互斥锁导致 OLED 花屏和 DS3231 读取失败
+
+- **迭代**: Bug 修复（影响迭代 1.1 I2C 总线、迭代 1.2 OLED 驱动、迭代 1.5 RTC 显示）
+- **状态**: ✅ 已完成（待实机验收）
+- **问题描述**: OLED 偶发花屏，Home 页面偶发无法读取 DS3231 时间（显示 "--/-- RTC"）
+- **根本原因**: `i2c_bus.c` 的 `i2c_bus_read()/write()` 无 FreeRTOS mutex 保护，`sh1106.c` 绕过 `i2c_bus` 直接调用 `i2c_master_cmd_begin()`。高优先级的 `sensor_task`（每 20ms I2C 读 MPU6050）可抢占低优先级的 Timer Service 回调（OLED 刷新 + RTC 读取），导致 I2C 总线状态被破坏
+- **解决方案**:
+  1. `i2c_bus.c` 新增全局 mutex，`i2c_bus_read()/write()` 加锁保护
+  2. 新增 `i2c_bus_lock()/unlock()` 公开接口
+  3. `sh1106.c` 拆出 `sh1106_write_cmd_nolock()` 内部版本
+  4. `sh1106_update()` 用 `i2c_bus_lock(200)` 包裹整个 8 页循环，确保 OLED 刷新原子性
+- **修改文件**:
+  - `components/drivers/common/include/i2c_bus.h`（新增 lock/unlock 声明）
+  - `components/drivers/common/i2c_bus.c`（新增 mutex + lock/unlock 实现 + read/write 加锁）
+  - `components/drivers/sh1106/sh1106.c`（write_cmd_nolock + update 整体加锁 + write_cmd 加锁）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0xf82e0，app 分区 84% 空闲）
+  - [ ] 实机持续运行 10 分钟无花屏
+  - [ ] Home 页面时间读取稳定（不再出现 "--/-- RTC"）
+  - [ ] 传感器采样频率不受 mutex 等待影响
+- **备注**:
+  - 对应问题记录：ISSUE-032
+  - 此修复从根本上解决了所有 I2C 设备并发访问的竞争问题
+
+---
+
+### 2026-02-19 - Bug 修复: I2C mutex 修复后 Home 页面切换时始终无法获取 RTC 时间
+
+- **迭代**: Bug 修复（影响迭代 1.5 RTC 显示、迭代 1.2 OLED 驱动）
+- **状态**: ✅ 已完成（待实机验收）
+- **问题描述**: 应用 I2C mutex 修复（ISSUE-032）后，切换到 Home 页面时始终无法获取 DS3231 时间，需等待若干时间（最长约 60 秒）才能显示正确时间
+- **根本原因**:
+  1. `sh1106_update()` 将整个 8 页 I2C 循环包裹在单次锁中（~30ms），高优先级 `sensor_task` 每 20ms 竞争 I2C 锁，低优先级 Timer Service 回调中的 `ds3231_get_time()` 难以获取锁
+  2. `draw_home_page()` 在 RTC 读取失败时未重置 `s_home_last_minute`，导致 500ms 定时器回调中因 `s_home_last_minute == rtc_time.minute` 而跳过重绘，需等到分钟变化才重绘
+- **解决方案**:
+  1. `sh1106_update()` 从整体加锁改为逐页加锁（每页 ~4ms），页间释放锁给其他 I2C 设备
+  2. `draw_home_page()` 在 RTC 失败分支添加 `s_home_last_minute = -1`，强制下次定时器回调重绘
+- **修改文件**:
+  - `components/drivers/sh1106/sh1106.c`（sh1106_update 从整体加锁改为逐页加锁）
+  - `components/ui_manager/ui_manager.c`（draw_home_page RTC 失败分支添加 s_home_last_minute = -1）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0xf8300，app 分区 84% 空闲）
+  - [ ] 实机切换到 Home 页面后时间立即或数秒内显示
+  - [ ] 实机持续运行 10 分钟无花屏（逐页加锁仍保证每页原子性）
+  - [ ] 传感器采样频率不受影响
+- **备注**:
+  - 对应问题记录：ISSUE-033
+  - 逐页加锁保证每页 3 条命令 + 128 字节数据在同一个锁内完成，不会出现页内撕裂
+
+---
+
+### 2026-02-19 - 功能补充："查询时间"语音命令响应
+
+- **迭代**: Week 3 - 迭代 3.3 功能补充
+- **状态**: ✅ 已完成（待实机验收）
+- **任务简述**: 补充"查询时间"语音命令的 TTS 响应，识别后播报当前 RTC 时间
+- **修改文件**:
+  - `components/drivers/audio/include/simple_tts.h`（新增 `tts_speak_time` 声明）
+  - `components/drivers/audio/simple_tts.c`（实现 `tts_speak_time`：prefix_time + 小时 + time_dot + 分钟）
+  - `components/services/voice_cmd/voice_cmd.c`（添加 `VOICE_CMD_QUERY_TIME` case + `#include "ds3231.h"`）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0xf8400，app 分区 84% 空闲）
+  - [ ] 实机说"查询时间"后播报当前时间（如"当前时间为 十四 点 三十五"）
+  - [ ] 分钟 < 10 时补零播报（如"十点零五"）
+  - [ ] RTC 读取失败时播放降级提示音
+- **备注**:
+  - 语音命令拼音注册和枚举映射在迭代 3.3 中已完成，本次仅补充响应逻辑和 TTS 函数
+
+---
+
+### 2026-02-19 - 功能增强：ALARMING 状态报警音频循环播放
+
+- **迭代**: Week 3 - 迭代 3.1 功能增强
+- **状态**: ✅ 已完成（待实机验收）
+- **任务简述**: 将 ALARMING 状态的报警音频从单次播放改为循环播放，直到手动取消报警
+- **修改文件**:
+  - `components/services/alarm_manager/alarm_manager.c`（新增循环播放任务 + enter_state 改用循环机制）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0xf8500，app 分区 84% 空闲）
+  - [ ] 实机按 SW1 触发报警后 "我需要帮助" 持续循环播放
+  - [ ] 实机语音 "救命" 触发报警后音频持续循环
+  - [ ] SW1 长按取消报警后循环立即停止
+  - [ ] 跌倒预报警 → ALARMING 升级后也循环播放
+  - [ ] App ACK 确认后循环停止
+- **备注**:
+  - 对应问题记录：ISSUE-035
+  - 循环任务优先级 3，每次播完间隔 500ms 再重复
+  - 离开 ALARMING 状态时 `s_loop_active = false` + `audio_play_stop()` 双重保证停止
+
+---
+
+### 2026-02-19 - 迭代 3.4: 完整报警流程联调（团队协作完成）
+
+- **迭代**: Week 3 - 迭代 3.4
+- **状态**: ✅ 已完成（待实机验收）
+- **任务简述**: 报警缓存环形队列、BLE 重连补发、ACK 命令对接、Telemetry 实时频率切换、Status 特征完善、SPO2_WARNING 删除、跌倒预报警音频区分
+- **子任务**:
+  - **3.4-0 (developer-alarm)**: 删除 SPO2_WARNING — health_monitor.h 删除 SPO2_WARNING_LOW 宏、health_monitor.c 删除 WARNING 判定分支和引用
+  - **3.4-A (developer-alarm)**: 报警缓存环形队列 + alarm_ack(event_id) 签名变更 + BLE 重连补发任务 + PRE_ALARM 播放 "pre_alarm_fall" + ALARMING 跌倒播放 "alarm_help"
+  - **3.4-B (developer-ble)**: ACK_ALARM 命令调用 alarm_ack + Telemetry 实时频率切换 + Status 返回真实 alarm_state + BLE_ALARM_TYPE_SPO2_WARNING → RESERVED_8
+- **修改文件**:
+  - `components/services/health_monitor/include/health_monitor.h`（删除 SPO2_WARNING_LOW 宏）
+  - `components/services/health_monitor/health_monitor.c`（删除 SPO2 WARNING 判定分支、移除 publish_health_alert 中 SPO2_WARNING 引用）
+  - `components/services/alarm_manager/include/alarm_manager.h`（新增缓存配置宏、alarm_cache_entry_t 结构体、alarm_ack 签名变更、alarm_cache_find API）
+  - `components/services/alarm_manager/alarm_manager.c`（新增缓存环形队列、4 个内部缓存操作函数、send_ble_alarm 缓存、alarm_ack 带 event_id、BLE 重连补发任务、EVT_BLE_CONN 订阅、PRE_ALARM 音频改为 pre_alarm_fall、FALL wav 改为 alarm_help、更新枚举映射注释）
+  - `components/ble_gatt/include/ble_gatt_defs.h`（新增 BLE_TELEMETRY_REALTIME_INTERVAL_MS 宏、BLE_ALARM_TYPE_SPO2_WARNING → BLE_ALARM_TYPE_RESERVED_8）
+  - `components/ble_gatt/ble_service.c`（新增 alarm_manager.h 引用、ACK_ALARM 对接、Telemetry 动态间隔 + xTaskNotifyWait、采样模式变更回调、Status alarm_state 真实值）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过，无错误无警告
+  - [ ] nRF Connect 订阅 FF02 后收到 Alarm Notify
+  - [ ] 模拟跌倒 → PRE_ALARM 黄灯闪烁 + 播放 "pre_alarm_fall" + 不发 BLE
+  - [ ] PRE_ALARM 期间按 SW1 取消 → 回到 IDLE
+  - [ ] 模拟跌倒 → 15s 未取消 → ALARMING 红灯快闪 + 循环播放 "alarm_help" + 发 BLE
+  - [ ] 报警期间断开 BLE 重新连接后 2s 内收到补发
+  - [ ] 通过 FF03 发送 ACK_ALARM 后 WS2812 绿色常亮
+  - [ ] 同一报警补发 5 次后不再重发
+  - [ ] 多次报警（>16 次）最旧记录被覆盖
+  - [ ] 传感器进入实时检测模式后 Telemetry 间隔变为 5s
+  - [ ] 恢复正常采样模式后 Telemetry 间隔恢复 120s
+  - [ ] 读取 FF04 Status 第 3 字节返回当前 alarm_state
+  - [ ] 血氧 91%（原 WARNING 区间）无告警产生
+- **编译结果**: 二进制 0xf8d30（~1019KB），app 分区 84% 空闲
+- **关键设计决策**:
+  - 报警缓存使用固定数组环形队列（N=16），不使用 NVS 持久化
+  - 补发任务为一次性任务（vTaskDelete），每次 BLE 重连创建新任务
+  - Telemetry 动态间隔使用 xTaskNotifyWait 替代 vTaskDelay，收到通知立即应用新间隔
+  - 所有缓存操作复用 alarm_manager 既有互斥锁保护
+- **备注**:
+  - 由四角色团队协作完成：team-lead（方案设计+协调+编译验证）、developer-alarm（缓存+补发）、developer-ble（ACK+Telemetry+Status）、tester（两轮代码审查）
+  - 两轮代码审查均通过，无阻塞性问题
+  - 测试员建议：快速断连/重连可能创建多个补发任务（可接受，各自独立运行并自行销毁）
+

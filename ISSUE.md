@@ -555,3 +555,455 @@ rtc_time.day_of_week = dow;
 
 **涉及文件**：
 - `components/ble_gatt/ble_service.c`
+
+---
+
+## ISSUE-019：Timer Service 任务负载过重（报警与灯效定时器）
+
+**发现日期**：2026-02-18
+
+**原因**：
+`alarm_manager` 的软件定时器回调运行在 Timer Service 任务上下文内，旧实现使用 `xSemaphoreTake(..., pdMS_TO_TICKS(100))`，在竞争时会阻塞最多 100ms；回调触发状态切换后还会间接执行 BLE 通知和 WS2812 控制。`ws2812` 旧实现同样通过软件定时器回调执行闪烁，而回调内部 `ws2812_send_rgb()` 包含 `rmt_tx_wait_all_done(..., 100)` 阻塞等待。两处叠加导致 Timer Service 任务负担偏重。
+
+**后果**：
+- `PRE_ALARM` / `ACKED` 超时状态切换可能出现抖动或延迟。
+- 系统忙时 LED 闪烁稳定性下降，定时器命令队列存在背压风险。
+
+**解决方案**：
+1. 将 WS2812 闪烁机制从软件定时器回调迁移为独立任务 `ws2812_blink_task`，由任务周期性执行亮灭和 RMT 发送。
+2. 新增 WS2812 互斥锁保护闪烁参数；`ws2812_blink_start/stop` 仅更新状态并通过 `xTaskNotifyGive()` 唤醒任务。
+3. 将 `alarm_manager` 的 `pre_alarm_timer_cb/acked_timer_cb` 改为非阻塞拿锁（`xSemaphoreTake(..., 0)`）；拿锁失败时使用 `xTimerChangePeriod(..., TIMER_RETRY_MS)` 短延时重试，避免阻塞 Timer Service。
+4. 增加 tick 下限保护，避免极小闪烁周期退化为忙等。
+
+**涉及文件**：
+- `components/services/alarm_manager/alarm_manager.c`
+- `components/drivers/ws2812/ws2812.c`
+- `components/drivers/ws2812/include/ws2812.h`
+
+---
+
+## ISSUE-020：alarm_manager 的 get_alarm_wav 缺少 ALERT_TYPE_SPO2_WARNING 映射
+
+**发现日期**：2026-02-18
+
+**原因**：
+`alarm_manager.c` 的 `get_alarm_wav()` 函数中 switch-case 缺少 `ALERT_TYPE_SPO2_WARNING` 分支。当血氧预警触发报警进入 ALARMING 状态时，`get_alarm_wav()` 返回 NULL，导致 `alarm_audio_play_async(NULL)` 直接跳过音频播放。
+
+**后果**：
+- 血氧预警（SPO2_WARNING）级别的报警无语音播报
+- WS2812 灯光和 BLE 通知正常，但喇叭静默
+
+**解决方案**：
+在 `get_alarm_wav()` 的 switch 中添加 SPO2_WARNING 分支，复用 spo2_low 的音频文件：
+```c
+case ALERT_TYPE_SPO2_LOW:     return "alarm_spo2_low";
+case ALERT_TYPE_SPO2_WARNING: return "alarm_spo2_low";  // 复用
+```
+
+**涉及文件**：`components/services/alarm_manager/alarm_manager.c`
+
+---
+
+## ISSUE-021：VOICE_CMD_CALL_FAMILY 双重音频播放竞争
+
+**发现日期**：2026-02-18
+
+**原因**：
+`voice_cmd.c` 的 `handle_command_response(VOICE_CMD_CALL_FAMILY)` 中，`alarm_trigger(ALERT_TYPE_CALL_FAMILY, NULL)` 内部通过 `alarm_audio_play_async()` 启动异步任务播放 "call_family.wav"。紧接着又直接调用 `audio_play_wav("call_family")`，导致两个调用者竞争 I2S TX 互斥锁：异步任务先获取锁播放，直接调用阻塞等待最多 5 秒后再次播放同一文件。
+
+**后果**：
+- "呼叫家人" 语音被播放两次（或第二次超时失败）
+- I2S 资源被不必要地长时间占用
+
+**解决方案**：
+移除冗余的直接 `audio_play_wav("call_family")` 调用，改为 `alarm_trigger()` + `wait_audio_finish()`：
+```c
+case VOICE_CMD_CALL_FAMILY:
+    alarm_trigger(ALERT_TYPE_CALL_FAMILY, NULL);
+    wait_audio_finish();  // 等待异步音频完成
+    break;
+```
+
+**涉及文件**：`components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-022：VOICE_CMD_HELP 触发后 I2S 资源竞争
+
+**发现日期**：2026-02-18
+
+**原因**：
+`voice_cmd.c` 的 `handle_command_response(VOICE_CMD_HELP)` 中，`alarm_trigger(ALERT_TYPE_MANUAL, NULL)` 启动异步音频任务播放 "alarm_help.wav"。由于 `alarm_trigger` 是非阻塞的，函数立即返回，随后 `resume_feed_task()` 被调用，feed 任务尝试 `audio_i2s_acquire_rx()` 重新获取 I2S RX。但此时异步音频任务可能仍持有 I2S TX（共享引脚），导致 feed 任务阻塞等待。
+
+**后果**：
+- feed 任务阻塞最多 5 秒等待 I2S 资源
+- 语音识别在此期间中断（AFE 无新数据输入）
+- 系统最终能恢复，但存在功能降级窗口
+
+**解决方案**：
+在 `alarm_trigger()` 后添加 `wait_audio_finish()` 等待异步音频播放完成，再执行 `resume_feed_task()`：
+```c
+case VOICE_CMD_HELP:
+    alarm_trigger(ALERT_TYPE_MANUAL, NULL);
+    wait_audio_finish();  // 等待异步音频完成后再恢复 feed
+    break;
+```
+
+**涉及文件**：`components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-023：vc_feed 任务栈溢出（ESP-SR AFE feed 调用链过深）
+
+**发现日期**：2026-02-18
+
+**原因**：
+`voice_cmd.c` 中 `vc_feed` 任务的栈大小设置为 4096 字节，但 ESP-SR AFE 的 `s_afe_iface->feed()` 函数内部调用链较深（包含信号处理、噪声抑制等操作），实际栈使用超过 4096 字节。
+
+**后果**：
+- 系统运行时触发 `vApplicationStackOverflowHook`，打印 `A stack overflow in task vc_feed has been detected`
+- ESP32-S3 进入 panic 并重启，语音识别功能完全不可用
+
+**解决方案**：
+将 `vc_feed` 任务栈从 4096 增大到 8192 字节（与 `vc_detect` 任务一致）：
+```c
+BaseType_t ok = xTaskCreatePinnedToCore(
+    feed_task,
+    "vc_feed",
+    8192,    // 原 4096，ESP-SR AFE feed 调用链需要更大栈空间
+    NULL, 5, &s_feed_task, 0);
+```
+
+**涉及文件**：`components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-024：上电电流噪声 — RX 模式下 MAX98357A DIN 悬空
+
+**发现日期**：2026-02-18
+
+**原因**：
+INMP441 和 MAX98357A 共用 BCLK(GPIO17) 和 WS(GPIO16)。系统启动后 `voice_cmd_start()` 立即获取 I2S RX，I2S 主模式持续输出时钟信号。但 `audio_i2s_acquire_rx()` 将 DOUT(GPIO18) 设为 `I2S_GPIO_UNUSED`，该引脚处于浮空状态。MAX98357A 在有时钟但 DIN 随机的情况下，将随机电平解码为音频数据输出。
+
+**后果**：
+- 扬声器一通电就持续输出电流噪声
+- 噪声在语音识别运行期间始终存在
+
+**解决方案**：
+在 `audio_i2s_acquire_rx()` 末尾和 `audio_i2s_release()`（TX模式释放后）主动将 DOUT(GPIO18) 配置为 GPIO 输出并拉低，使 MAX98357A 接收全零数据（静音）：
+```c
+gpio_set_direction(AUDIO_DOUT_GPIO, GPIO_MODE_OUTPUT);
+gpio_set_level(AUDIO_DOUT_GPIO, 0);
+```
+
+**涉及文件**：`components/drivers/audio/audio_player.c`
+
+---
+
+## ISSUE-025：语音播报链路与常驻识别互斥 — alarm_manager 不经过 pause/resume
+
+**发现日期**：2026-02-18
+
+**原因**：
+`alarm_manager.c` 的 `alarm_audio_play_async()` 创建异步任务直接调用 `audio_play_wav()`，该函数内部的 `audio_i2s_acquire_tx()` 尝试获取 I2S mutex。但 `voice_cmd.c` 的 feed_task 长期持有 I2S RX（占用 mutex），且 alarm_manager 未调用 `pause_feed_task()` 暂停 feed_task。导致 TX acquire 超时（5秒），报警/TTS 播报失败。
+
+**后果**：
+- 有语音识别运行时，报警播报和 TTS 查询播报大概率失败
+- I2S 资源无法从 RX 切换到 TX
+
+**解决方案**：
+1. 在 `audio_i2s_acquire_tx()` 中添加 pre-hook 调用机制，在尝试获取 mutex 之前自动调用已注册的钩子函数
+2. 在 `audio_i2s_release()` 中（TX 模式释放后）添加 post-hook 调用
+3. `voice_cmd_init()` 中注册 `pause_feed_task/resume_feed_task` 为钩子
+4. `pause_feed_task/resume_feed_task` 添加引用计数，支持嵌套调用（手动 + hook 共存）
+
+**涉及文件**：
+- `components/drivers/audio/include/audio_player.h`
+- `components/drivers/audio/audio_player.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-026：wait_audio_finish() 竞态窗口 — 异步播放未开始即返回
+
+**发现日期**：2026-02-18
+
+**原因**：
+`voice_cmd.c` 的 `handle_command_response()` 中调用 `alarm_trigger()` 后使用 `wait_audio_finish()` 等待异步音频完成。`wait_audio_finish()` 依赖 `audio_is_playing()` 检查 `s_playing` 标志，但 `s_playing` 在 `audio_play_wav()` 内部才被置 true。如果异步任务尚未调度执行，`s_playing` 仍为 false，导致提前返回。
+
+**后果**：
+- feed_task 被过早恢复，抢占 I2S RX
+- 异步音频任务随后尝试 acquire TX 时可能与 feed_task 竞争
+
+**解决方案**：
+1. 新增 `audio_play_wav_async()` API，在创建异步任务前预设 `s_playing = true`
+2. 新增 `audio_wait_done()` API，基于 EventGroup 等待完成事件
+3. `alarm_manager.c` 改用 `audio_play_wav_async()`
+4. `voice_cmd.c` 改用 `audio_wait_done(10000)`
+
+**涉及文件**：
+- `components/drivers/audio/include/audio_player.h`
+- `components/drivers/audio/audio_player.c`
+- `components/services/alarm_manager/alarm_manager.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-027：INMP441 采样参数不匹配 — 16bit slot 导致 BCLK 低于规格
+
+**发现日期**：2026-02-18
+
+**原因**：
+`audio_i2s_acquire_rx()` 配置 I2S RX 为 16bit slot、mono 模式，BCLK = 16000 * 16 * 2 = 512 kHz。INMP441 数据手册规定 BCLK 最低频率为 1.024 MHz。低于规格的 BCLK 导致 INMP441 数据输出与 I2S 帧对齐错误，且 24bit 输出被截断。
+
+**后果**：
+- 麦克风采集的 PCM 数据存在位对齐错误
+- WakeNet/MultiNet 语音识别率降低
+
+**解决方案**：
+1. `audio_i2s_acquire_rx()` 的 slot 配置改为 `I2S_DATA_BIT_WIDTH_32BIT`（BCLK = 1.024 MHz）
+2. `voice_cmd.c` 的 `feed_task` 读取 32bit 样本后右移 16 位转 16bit 再 feed 给 AFE
+
+**涉及文件**：
+- `components/drivers/audio/audio_player.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-028：初始化失败未 fail-fast — 语音模块"看起来在运行但不可用"
+
+**发现日期**：2026-02-18
+
+**原因**：
+`main.c` 中 `audio_player_init()` 失败后仅记录日志，仍继续初始化 `voice_cmd`。voice_cmd 依赖 audio_player 的 I2S mutex 和 SPIFFS，无法正常工作。
+
+**后果**：
+- 系统启动后语音识别任务运行但功能不可用
+- 难以定位问题根源
+
+**解决方案**：
+用 `audio_ok` 标志记录结果，`audio_ok == false` 时跳过 voice_cmd 初始化。
+
+**涉及文件**：`main/main.c`
+
+---
+
+## ISSUE-029：PROGRESS.md 3.2/3.3 进度状态偏乐观
+
+**发现日期**：2026-02-18
+
+**原因**：
+迭代 3.2/3.3 标记为"已完成"，但验收仅为代码审查，缺乏实机闭环验证。实际存在 ISSUE-024 ~ ISSUE-028 等结构性问题。
+
+**后果**：
+- 项目进度跟踪失真
+
+**解决方案**：
+将 3.2/3.3 状态改为"代码重构中（待实机验收）"。
+
+**涉及文件**：`PROGRESS.md`
+
+---
+
+## ISSUE-030：WAV 文件头格式不兼容导致语音播报和语音识别完全失效
+
+**发现日期**：2026-02-19
+
+**原因**：
+`audio_player.c` 中的 WAV 解析器使用固定 44 字节的 `wav_header_t` 结构体读取文件头，假设 `fmt` 块之后紧跟 `data` 块。但所有 31 个 WAV 文件由 FFmpeg（Lavf62.3.100）生成，在 `fmt` 和 `data` 块之间插入了 34 字节的 `LIST/INFO/ISFT` 元数据块，实际文件头为 78 字节。导致 `data_size` 字段读到的是 LIST 块内容而非真实 PCM 数据长度，PCM 数据起始位置偏移 34 字节，且 34 不是 2 的倍数（16-bit 采样 = 2 字节对齐），所有采样高低字节颠倒。
+
+**后果**：
+1. 语音播报：所有 WAV 播放产生噪声/失真，无法正常播放报警语音和 TTS 数字播报
+2. 语音识别：唤醒确认音和命令反馈音异常，I2S 资源释放时序被打乱，feed_task 长时间暂停导致 AFE ring buffer 数据过期，语音识别准确率大幅下降
+3. 报警系统：alarm_manager 触发的报警音频不可辨识
+
+**解决方案**：
+将 `audio_play_wav()` 的 WAV 头解析从固定 44 字节结构体改为 chunk 遍历模式：先读 12 字节 RIFF 容器头，然后循环读取 8 字节 chunk 头（4 字节 ID + 4 字节 size），遇到 `fmt ` 读取格式参数，遇到 `data` 记录数据长度并开始播放，其他 chunk（LIST、fact 等）直接跳过。
+
+**涉及文件**：`components/drivers/audio/audio_player.c`
+
+---
+
+## ISSUE-031：I2S MONO 模式下 L+R 交错数据导致语音识别失效
+
+**发现日期**：2026-02-19
+
+**原因**：
+ESP-IDF v5.2 的 I2S 标准模式在 ESP32-S3 上配置 `I2S_SLOT_MODE_MONO` 时，实际仍然捕获左右双声道交错数据（`[L0,R0,L1,R1,...]`）。`voice_cmd.c` 的 feed_task 请求读取 `num_samples * sizeof(int32_t)` = 640 字节（160 个 32-bit 样本），实际得到 80 个 L 样本 + 80 个 R 样本交错排列。由于 INMP441 的 L/R 引脚接 GND（左声道输出），右声道为零值。
+
+**后果**：
+1. feed_task 以 5ms/chunk 运行（应为 10ms/chunk），即 2 倍实时速率喂入 AFE ring buffer，导致 ring buffer 溢出
+2. 50% 的样本为右声道零值，WakeNet 接收到的音频数据有一半是静音
+3. 尽管 VAD（语音活动检测）能检测到语音信号（vad=1），但 WakeNet 始终无法识别唤醒词（wakeup=0）
+4. 语音识别功能完全失效
+
+**解决方案**：
+将 I2S 读取缓冲区扩大为 2 倍（`num_samples * 2 * sizeof(int32_t)` = 1280 字节），在 32-bit 转 16-bit 的转换循环中以步长 2 遍历，仅提取偶数索引（左声道）的样本：
+
+```c
+int read_size = num_samples * 2 * sizeof(int32_t);  // 1280 bytes
+// ...
+int raw_samples = bytes_read / sizeof(int32_t);
+int samples = 0;
+for (int i = 0; i < raw_samples && samples < num_samples; i += 2) {
+    int32_t s = raw_buf[i] >> 14;  // left channel + 4x gain
+    if (s > 32767)  s = 32767;
+    if (s < -32768) s = -32768;
+    feed_buf[samples++] = (int16_t)s;
+}
+```
+
+**涉及文件**：`components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-032：I2C 总线无互斥锁保护 — OLED 花屏 + DS3231 读取失败
+
+**发现日期**：2026-02-19
+
+**原因**：
+`i2c_bus.c` 中的 `i2c_bus_read()` / `i2c_bus_write()` 没有 FreeRTOS mutex 保护，且 `sh1106.c` 绕过 `i2c_bus` 封装直接调用 `i2c_master_cmd_begin()`。系统中存在多个并发访问 I2C 总线的任务：
+
+1. `sensor_task`（优先级 6，每 20ms）：调用 `mpu6050_read_accel/gyro()`、`max30102_read_fifo()` 通过 `i2c_bus_read/write`
+2. Timer Service 任务（优先级 1，500ms 步数定时器）：调用 `ds3231_get_time()` 通过 `i2c_bus_read`，以及 `sh1106_update()` 直接 `i2c_master_cmd_begin`
+3. Timer Service 任务（2 分钟刷新定时器）：同上
+
+`sensor_task` 优先级（6）高于 Timer Service（1），可在定时器回调执行 I2C 操作时抢占，导致 I2C 总线状态被破坏。
+
+**后果**：
+1. **RTC 读取失败**：`ds3231_get_time()` 被 `sensor_task` 的 I2C 操作中断，返回 `ESP_FAIL`，UI 显示 `--/-- RTC`
+2. **OLED 花屏**：`sh1106_update()` 需要 32 次 I2C 事务（8 页 × 4 次），被中途抢占后页地址/列地址命令错乱，数据写入错误位置
+
+**解决方案**：
+1. 在 `i2c_bus.c` 中新增 `SemaphoreHandle_t s_i2c_mutex`，`i2c_bus_init()` 时创建
+2. `i2c_bus_read()` / `i2c_bus_write()` 前后加 `xSemaphoreTake/Give` 保护
+3. 新增 `i2c_bus_lock()` / `i2c_bus_unlock()` 公开接口，供绕过封装的驱动使用
+4. `sh1106.c` 中拆出 `sh1106_write_cmd_nolock()` 内部无锁版本
+5. `sh1106_write_cmd()` 加锁版本供单条命令使用
+6. `sh1106_update()` 用 `i2c_bus_lock(200)` 包裹整个 8 页循环，内部使用无锁版本，确保原子性
+
+**涉及文件**：
+- `components/drivers/common/include/i2c_bus.h`
+- `components/drivers/common/i2c_bus.c`
+- `components/drivers/sh1106/sh1106.c`
+
+---
+
+## ISSUE-033：切换至主界面始终读取不到 RTC 时间，需等待分钟变化才恢复
+
+**发现日期**：2026-02-19
+
+**原因**：
+两个问题叠加：
+
+1. **`sh1106_update()` 持锁时间过长（~30ms）**：ISSUE-032 修复中将整个 8 页 OLED 刷新包裹在单个 `i2c_bus_lock()` 中，持锁约 30ms。期间高优先级 `sensor_task`（优先级 6）的 I2C 操作被阻塞，释放后立即抢占。低优先级的 Timer Service / 按键任务中的 `ds3231_get_time()` 在 100ms 内仍可能竞争失败。
+
+2. **Home 页 RTC 读取失败后不会触发重绘**：`draw_home_page()` 中当 `ds3231_get_time()` 失败时，`s_home_last_minute` 不被更新（保留上次访问时的值）。500ms 定时器回调判断 `s_home_last_minute != rtc_time.minute` 时，若分钟未变则跳过重绘，导致 `--/-- RTC` 持续显示直到分钟变化（最多等 60 秒）。
+
+**后果**：
+- 每次切换到主界面初始显示 `--/-- RTC`
+- 必须等待分钟值变化后才能显示正确时间
+
+**解决方案**：
+1. `sh1106_update()` 从整体加锁改为**逐页加锁**：每页的 4 次 I2C 事务保持原子性（防花屏），页间释放锁让其他设备访问 I2C。最大持锁时间从 ~30ms 降至 ~4ms。
+2. `draw_home_page()` 的 else 分支添加 `s_home_last_minute = -1`，确保下次 500ms 定时器一定触发重绘。
+
+**涉及文件**：
+- `components/drivers/sh1106/sh1106.c`
+- `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-034："查询时间"语音命令已注册但缺少响应处理
+
+**发现日期**：2026-02-19
+
+**原因**：
+`voice_cmd.c` 中已注册拼音命令 `"cha xun shi jian"`（id=5）并在 `map_command_id()` 中映射为 `VOICE_CMD_QUERY_TIME`，但 `handle_command_response()` 的 switch 语句中无对应 case，导致命中 `default` 分支播放 `cmd_not_recognized.wav`。同时 `simple_tts` 中缺少时间播报函数。
+
+**后果**：
+- 用户说 "查询时间" 被正确识别后，喇叭播放 "未识别命令" 而非当前时间
+- SPIFFS 中已有 `prefix_time.wav` 和 `time_dot.wav` 但从未被使用
+
+**解决方案**：
+1. `simple_tts.h/c` 新增 `tts_speak_time(uint8_t hour, uint8_t minute)`，播放 "当前时间为 XX 点 XX"
+2. `voice_cmd.c` 的 `handle_command_response()` 添加 `VOICE_CMD_QUERY_TIME` case，读取 DS3231 后调用 TTS 播报
+3. 分钟 < 10 时补播 "零"（如 "十四点零五"），符合中文表达习惯
+
+**涉及文件**：
+- `components/drivers/audio/include/simple_tts.h`
+- `components/drivers/audio/simple_tts.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-035：ALARMING 状态下报警音频仅播放一次
+
+**发现日期**：2026-02-19
+
+**原因**：
+`alarm_manager.c` 中 `enter_state(ALARM_STATE_ALARMING)` 调用 `alarm_audio_play_async()` 播放一次报警 WAV 文件后即结束。没有循环播放机制。
+
+**后果**：
+- 按下 SW1 或语音 "救命" 触发报警后，"我需要帮助" 仅播放一次
+- 报警状态持续（红灯闪烁、BLE Notify 已发送），但声音提示仅持续数秒
+- 在嘈杂环境或无人注意时，单次播放容易被忽略
+
+**解决方案**：
+将 ALARMING 状态的音频播放从单次异步播放改为循环播放任务：
+1. 新增 `alarm_loop_task()`：`while (s_loop_active)` 循环调用 `audio_play_wav()`，每次播完间隔 500ms
+2. `enter_state(ALARM_STATE_ALARMING)` 启动循环任务代替 `alarm_audio_play_async()`
+3. 离开 ALARMING 状态时设置 `s_loop_active = false` + `audio_play_stop()` 停止循环
+
+**涉及文件**：
+- `components/services/alarm_manager/alarm_manager.c`
+
+---
+
+## ISSUE-036：SPO2_WARNING（血氧预警 90%-92%）功能无实际意义
+
+**发现日期**：2026-02-19
+
+**原因**：
+`health_monitor.c` 中 `check_alerts()` 函数对血氧 90%-92% 区间触发 `ALERT_TYPE_SPO2_WARNING`（WARNING 级别），该告警不走连续计数确认机制，立即触发。但此区间值波动频繁，容易产生误报，且 WARNING 级别报警对用户无实际帮助。
+
+**后果**：
+- 血氧在 90%-92% 之间频繁触发 WARNING 告警，影响用户体验
+- WARNING 级别与 ALARM 级别混用，增加系统复杂度
+
+**解决方案**：
+1. `event_bus.h`: `ALERT_TYPE_SPO2_WARNING` 位置改为 `ALERT_TYPE_PRE_ALARM_FALL`（复用枚举位置 6）
+2. `health_monitor.h`: 删除 `#define SPO2_WARNING_LOW 92` 宏
+3. `health_monitor.c`: 删除 `check_alerts()` 中 `else if (spo2 <= SPO2_WARNING_LOW)` 分支；移除 `publish_health_alert()` 中 `ALERT_TYPE_SPO2_WARNING` 引用
+4. `alarm_manager.c`: 移除 `alert_to_ble_alarm_type()` 和 `get_alarm_wav()` 中的 SPO2_WARNING 映射（已在之前完成）
+5. `ble_gatt_defs.h`: `BLE_ALARM_TYPE_SPO2_WARNING = 8` → `BLE_ALARM_TYPE_RESERVED_8 = 8`（保留编号避免协议偏移）
+
+**涉及文件**：
+- `components/services/event_bus/include/event_bus.h`
+- `components/services/health_monitor/include/health_monitor.h`
+- `components/services/health_monitor/health_monitor.c`
+- `components/services/alarm_manager/alarm_manager.c`
+- `components/ble_gatt/include/ble_gatt_defs.h`
+
+---
+
+## ISSUE-037：跌倒 PRE_ALARM 与 ALARMING 播放相同音频，无法区分
+
+**发现日期**：2026-02-19
+
+**原因**：
+`alarm_manager.c` 中 `enter_state(ALARM_STATE_PRE_ALARM)` 调用 `alarm_audio_play_async("alarm_fall")`，而 ALARMING 阶段 `get_alarm_wav(ALERT_TYPE_FALL)` 也返回 `"alarm_fall"`。两个阶段播放相同的音频文件，用户无法通过声音区分预报警与正式报警。
+
+**后果**：
+- PRE_ALARM 阶段用户听到的是与 ALARMING 相同的紧急语音，不知道可以按键取消
+- 15 秒确认窗口形同虚设，用户无法意识到当前处于可取消状态
+
+**解决方案**：
+1. `enter_state(ALARM_STATE_PRE_ALARM)`: 将 `alarm_audio_play_async("alarm_fall")` 改为 `alarm_audio_play_async("pre_alarm_fall")`
+2. `get_alarm_wav(ALERT_TYPE_FALL)`: 返回值从 `"alarm_fall"` 改为 `"alarm_help"`（ALARMING 阶段播放求救语音）
+3. 音频资源 `pre_alarm_fall.wav`（内容："检测到跌倒，如需取消请按报警键"）和 `alarm_help.wav`（内容："我需要帮助"）均已存在于 `spiffs_data/`
+
+**涉及文件**：
+- `components/services/alarm_manager/alarm_manager.c`
+
+---

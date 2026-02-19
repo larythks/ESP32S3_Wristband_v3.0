@@ -1,6 +1,6 @@
 /**
  * @file health_monitor.h
- * @brief 健康监测服务 - 心率/血氧计算、体温阈值检测
+ * @brief 健康监测服务 - 心率/血氧计算、环境温度阈值检测
  */
 
 #ifndef HEALTH_MONITOR_H
@@ -23,19 +23,18 @@ extern "C" {
 
 // 血氧阈值 (%)
 #define SPO2_ALARM_LOW          90      // 血氧过低 (ALARM)
-#define SPO2_WARNING_LOW        92      // 血氧偏低 (WARNING)
 
-// 体温阈值 (°C)
-#define TEMP_ALARM_HIGH         37.8f   // 体温过高
+// 环境温度阈值 (°C)
+#define TEMP_ALARM_HIGH         35.0f   // 环境温度过高
 // #define TEMP_ALARM_LOW          35.0f   // 体温过低
-#define TEMP_ALARM_LOW          20.0f   // 体温过低
+#define TEMP_ALARM_LOW          20.0f   // 环境温度过低
 
 // 信号质量阈值
 #define PPG_MIN_AMPLITUDE       100     // PPG 最小有效振幅
-#define TEMP_MAX_JUMP           2.0f    // 体温最大有效跳变
+#define TEMP_MAX_JUMP           2.0f    // 温度最大有效跳变
 
 // 连续触发次数
-#define TEMP_ALARM_COUNT        3       // 体温连续越阈次数
+#define TEMP_ALARM_COUNT        3       // 温度连续越阈次数
 #define HR_ALARM_COUNT          2       // 心率连续越阈次数
 #define SPO2_ALARM_COUNT        2       // 血氧连续越阈次数
 
@@ -59,12 +58,12 @@ typedef struct {
     // 计算结果
     uint8_t heart_rate;         // 心率 (bpm), 0 表示无效
     uint8_t spo2;               // 血氧 (%), 0 表示无效
-    float temperature;          // 体温 (°C)
+    float temperature;          // 环境温度 (°C)
 
     // 有效性标志
     measure_validity_t hr_validity;     // 心率有效性
     measure_validity_t spo2_validity;   // 血氧有效性
-    measure_validity_t temp_validity;   // 体温有效性
+    measure_validity_t temp_validity;   // 温度有效性
 
     // 告警状态
     alert_level_t alert_level;  // 当前告警级别

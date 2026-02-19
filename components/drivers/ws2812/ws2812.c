@@ -3,14 +3,15 @@
  * @brief WS2812 RGB LED driver implementation
  *
  * Drives a single WS2812 LED on GPIO48 using the ESP-IDF 5.x RMT TX API.
- * Blink is implemented via a FreeRTOS software timer that toggles LED state.
+ * Blink is implemented via a dedicated FreeRTOS task.
  */
 
 #include "ws2812.h"
 #include "driver/rmt_tx.h"
 #include "driver/rmt_encoder.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/timers.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -32,15 +33,21 @@ static const char *TAG = "ws2812";
 #define WS2812_T0L_TICKS   8
 #define WS2812_T1H_TICKS   7
 #define WS2812_T1L_TICKS   6
+#define WS2812_BLINK_TASK_STACK 2048
+#define WS2812_BLINK_TASK_PRIO  4
+#define WS2812_MUTEX_WAIT_MS    5
 
 /* Driver context */
 typedef struct {
     rmt_channel_handle_t tx_channel;
     rmt_encoder_handle_t encoder;
-    TimerHandle_t blink_timer;
+    TaskHandle_t blink_task;
+    SemaphoreHandle_t mutex;
     uint8_t blink_r;
     uint8_t blink_g;
     uint8_t blink_b;
+    uint32_t blink_interval_ms;
+    bool blink_enabled;
     bool blink_on;         /* current blink phase: on or off */
     bool initialized;
 } ws2812_ctx_t;
@@ -74,20 +81,58 @@ static esp_err_t ws2812_send_rgb(uint8_t r, uint8_t g, uint8_t b)
     return ret;
 }
 
-/**
- * @brief FreeRTOS timer callback for blink
- *
- * Lightweight: only toggles a boolean and calls rmt_transmit (no I2C, no heavy ops).
- */
-static void ws2812_blink_timer_cb(TimerHandle_t timer)
+/* Blink worker task: keeps timer-service task free from LED transmit workload. */
+static void ws2812_blink_task(void *arg)
 {
-    (void)timer;
-    s_ctx.blink_on = !s_ctx.blink_on;
+    (void)arg;
 
-    if (s_ctx.blink_on) {
-        ws2812_send_rgb(s_ctx.blink_r, s_ctx.blink_g, s_ctx.blink_b);
-    } else {
-        ws2812_send_rgb(0, 0, 0);
+    while (1) {
+        bool enabled = false;
+        uint32_t interval_ms = 100;
+
+        if (xSemaphoreTake(s_ctx.mutex, portMAX_DELAY) == pdTRUE) {
+            enabled = s_ctx.blink_enabled;
+            interval_ms = s_ctx.blink_interval_ms;
+            xSemaphoreGive(s_ctx.mutex);
+        }
+
+        if (!enabled) {
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            continue;
+        }
+
+        TickType_t wait_ticks = pdMS_TO_TICKS(interval_ms);
+        if (wait_ticks == 0) {
+            wait_ticks = 1;
+        }
+
+        if (ulTaskNotifyTake(pdTRUE, wait_ticks) > 0) {
+            continue;
+        }
+
+        bool blink_on;
+        uint8_t r, g, b;
+        if (xSemaphoreTake(s_ctx.mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+            continue;
+        }
+
+        if (!s_ctx.blink_enabled) {
+            xSemaphoreGive(s_ctx.mutex);
+            continue;
+        }
+
+        s_ctx.blink_on = !s_ctx.blink_on;
+        blink_on = s_ctx.blink_on;
+        r = s_ctx.blink_r;
+        g = s_ctx.blink_g;
+        b = s_ctx.blink_b;
+        xSemaphoreGive(s_ctx.mutex);
+
+        if (blink_on) {
+            ws2812_send_rgb(r, g, b);
+        } else {
+            ws2812_send_rgb(0, 0, 0);
+        }
     }
 }
 
@@ -154,16 +199,34 @@ esp_err_t ws2812_init(void)
         return ret;
     }
 
-    /* 4. Create blink timer (initially stopped) */
-    s_ctx.blink_timer = xTimerCreate(
-        "ws2812_blink",
-        pdMS_TO_TICKS(500),   /* default period, changed on blink_start */
-        pdTRUE,               /* auto-reload */
-        NULL,
-        ws2812_blink_timer_cb);
+    /* 4. Create mutex for blink state updates */
+    s_ctx.mutex = xSemaphoreCreateMutex();
+    if (s_ctx.mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create ws2812 mutex");
+        rmt_disable(s_ctx.tx_channel);
+        rmt_del_encoder(s_ctx.encoder);
+        rmt_del_channel(s_ctx.tx_channel);
+        s_ctx.encoder = NULL;
+        s_ctx.tx_channel = NULL;
+        return ESP_ERR_NO_MEM;
+    }
 
-    if (s_ctx.blink_timer == NULL) {
-        ESP_LOGE(TAG, "Failed to create blink timer");
+    s_ctx.blink_interval_ms = 500;
+    s_ctx.blink_enabled = false;
+    s_ctx.blink_on = false;
+
+    /* 5. Create blink task (blocks while blink is disabled) */
+    BaseType_t task_ret = xTaskCreate(
+        ws2812_blink_task,
+        "ws2812_blink",
+        WS2812_BLINK_TASK_STACK,
+        NULL,
+        WS2812_BLINK_TASK_PRIO,
+        &s_ctx.blink_task);
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create ws2812 blink task");
+        vSemaphoreDelete(s_ctx.mutex);
+        s_ctx.mutex = NULL;
         rmt_disable(s_ctx.tx_channel);
         rmt_del_encoder(s_ctx.encoder);
         rmt_del_channel(s_ctx.tx_channel);
@@ -212,21 +275,25 @@ esp_err_t ws2812_blink_start(uint8_t r, uint8_t g, uint8_t b, uint32_t interval_
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Stop any existing blink first */
-    xTimerStop(s_ctx.blink_timer, 0);
+    if (xSemaphoreTake(s_ctx.mutex, pdMS_TO_TICKS(WS2812_MUTEX_WAIT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to lock ws2812 mutex in blink_start");
+        return ESP_ERR_TIMEOUT;
+    }
 
     /* Set blink parameters */
     s_ctx.blink_r = r;
     s_ctx.blink_g = g;
     s_ctx.blink_b = b;
+    s_ctx.blink_interval_ms = interval_ms;
+    s_ctx.blink_enabled = true;
     s_ctx.blink_on = true;
+    xSemaphoreGive(s_ctx.mutex);
 
     /* Turn on immediately */
     ws2812_send_rgb(r, g, b);
 
-    /* Update timer period and start */
-    xTimerChangePeriod(s_ctx.blink_timer, pdMS_TO_TICKS(interval_ms), 0);
-    /* xTimerChangePeriod also starts the timer */
+    /* Wake worker task so new config takes effect immediately */
+    xTaskNotifyGive(s_ctx.blink_task);
 
     ESP_LOGD(TAG, "Blink started: R=%u G=%u B=%u interval=%lu ms",
              r, g, b, (unsigned long)interval_ms);
@@ -240,11 +307,17 @@ esp_err_t ws2812_blink_stop(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    xTimerStop(s_ctx.blink_timer, 0);
+    if (xSemaphoreTake(s_ctx.mutex, pdMS_TO_TICKS(WS2812_MUTEX_WAIT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to lock ws2812 mutex in blink_stop");
+        return ESP_ERR_TIMEOUT;
+    }
+    s_ctx.blink_enabled = false;
     s_ctx.blink_on = false;
+    xSemaphoreGive(s_ctx.mutex);
 
     /* Turn off LED */
     ws2812_send_rgb(0, 0, 0);
+    xTaskNotifyGive(s_ctx.blink_task);
 
     ESP_LOGD(TAG, "Blink stopped");
     return ESP_OK;
