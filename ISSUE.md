@@ -959,3 +959,51 @@ for (int i = 0; i < raw_samples && samples < num_samples; i += 2) {
 - `components/services/alarm_manager/alarm_manager.c`
 
 ---
+
+## ISSUE-036：SPO2_WARNING（血氧预警 90%-92%）功能无实际意义
+
+**发现日期**：2026-02-19
+
+**原因**：
+`health_monitor.c` 中 `check_alerts()` 函数对血氧 90%-92% 区间触发 `ALERT_TYPE_SPO2_WARNING`（WARNING 级别），该告警不走连续计数确认机制，立即触发。但此区间值波动频繁，容易产生误报，且 WARNING 级别报警对用户无实际帮助。
+
+**后果**：
+- 血氧在 90%-92% 之间频繁触发 WARNING 告警，影响用户体验
+- WARNING 级别与 ALARM 级别混用，增加系统复杂度
+
+**解决方案**：
+1. `event_bus.h`: `ALERT_TYPE_SPO2_WARNING` 位置改为 `ALERT_TYPE_PRE_ALARM_FALL`（复用枚举位置 6）
+2. `health_monitor.h`: 删除 `#define SPO2_WARNING_LOW 92` 宏
+3. `health_monitor.c`: 删除 `check_alerts()` 中 `else if (spo2 <= SPO2_WARNING_LOW)` 分支；移除 `publish_health_alert()` 中 `ALERT_TYPE_SPO2_WARNING` 引用
+4. `alarm_manager.c`: 移除 `alert_to_ble_alarm_type()` 和 `get_alarm_wav()` 中的 SPO2_WARNING 映射（已在之前完成）
+5. `ble_gatt_defs.h`: `BLE_ALARM_TYPE_SPO2_WARNING = 8` → `BLE_ALARM_TYPE_RESERVED_8 = 8`（保留编号避免协议偏移）
+
+**涉及文件**：
+- `components/services/event_bus/include/event_bus.h`
+- `components/services/health_monitor/include/health_monitor.h`
+- `components/services/health_monitor/health_monitor.c`
+- `components/services/alarm_manager/alarm_manager.c`
+- `components/ble_gatt/include/ble_gatt_defs.h`
+
+---
+
+## ISSUE-037：跌倒 PRE_ALARM 与 ALARMING 播放相同音频，无法区分
+
+**发现日期**：2026-02-19
+
+**原因**：
+`alarm_manager.c` 中 `enter_state(ALARM_STATE_PRE_ALARM)` 调用 `alarm_audio_play_async("alarm_fall")`，而 ALARMING 阶段 `get_alarm_wav(ALERT_TYPE_FALL)` 也返回 `"alarm_fall"`。两个阶段播放相同的音频文件，用户无法通过声音区分预报警与正式报警。
+
+**后果**：
+- PRE_ALARM 阶段用户听到的是与 ALARMING 相同的紧急语音，不知道可以按键取消
+- 15 秒确认窗口形同虚设，用户无法意识到当前处于可取消状态
+
+**解决方案**：
+1. `enter_state(ALARM_STATE_PRE_ALARM)`: 将 `alarm_audio_play_async("alarm_fall")` 改为 `alarm_audio_play_async("pre_alarm_fall")`
+2. `get_alarm_wav(ALERT_TYPE_FALL)`: 返回值从 `"alarm_fall"` 改为 `"alarm_help"`（ALARMING 阶段播放求救语音）
+3. 音频资源 `pre_alarm_fall.wav`（内容："检测到跌倒，如需取消请按报警键"）和 `alarm_help.wav`（内容："我需要帮助"）均已存在于 `spiffs_data/`
+
+**涉及文件**：
+- `components/services/alarm_manager/alarm_manager.c`
+
+---
