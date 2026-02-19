@@ -100,7 +100,7 @@ static void draw_home_page(void)
         snprintf(date_buf, sizeof(date_buf), "%02u/%02u", rtc_time.month, rtc_time.day);
         sh1106_draw_string(0, 0, date_buf, 1);
 
-        int16_t week_x = 36;  // "MM/DD " 占 6*6=36 像素
+        int16_t week_x = 40;  // "MM/DD " 占 6*6=36 像素，留点间距到 40
         sh1106_draw_chinese(week_x, 0, FONT_CN_XING, 1);
         sh1106_draw_chinese(week_x + 13, 0, FONT_CN_QI, 1);
         sh1106_draw_chinese(week_x + 26, 0,
@@ -111,6 +111,7 @@ static void draw_home_page(void)
     } else {
         sh1106_draw_string(0, 0, "--/-- RTC", 1);
         snprintf(time_buf, sizeof(time_buf), "00:00");
+        s_home_last_minute = -1;  // 强制下次定时器回调重绘
     }
 
     // 第一行右侧温度

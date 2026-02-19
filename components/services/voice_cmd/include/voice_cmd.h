@@ -29,6 +29,7 @@ typedef enum {
     VOICE_CMD_QUERY_HR,      // "查询心率"
     VOICE_CMD_QUERY_STEPS,   // "查询步数"
     VOICE_CMD_QUERY_TEMP,    // "查询温度"
+    VOICE_CMD_QUERY_TIME,    // "查询时间"
     VOICE_CMD_CALL_FAMILY,   // "呼叫家人"
 } voice_cmd_id_t;
 

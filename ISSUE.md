@@ -856,3 +856,60 @@ for (int i = 0; i < raw_samples && samples < num_samples; i += 2) {
 **涉及文件**：`components/services/voice_cmd/voice_cmd.c`
 
 ---
+
+## ISSUE-032：I2C 总线无互斥锁保护 — OLED 花屏 + DS3231 读取失败
+
+**发现日期**：2026-02-19
+
+**原因**：
+`i2c_bus.c` 中的 `i2c_bus_read()` / `i2c_bus_write()` 没有 FreeRTOS mutex 保护，且 `sh1106.c` 绕过 `i2c_bus` 封装直接调用 `i2c_master_cmd_begin()`。系统中存在多个并发访问 I2C 总线的任务：
+
+1. `sensor_task`（优先级 6，每 20ms）：调用 `mpu6050_read_accel/gyro()`、`max30102_read_fifo()` 通过 `i2c_bus_read/write`
+2. Timer Service 任务（优先级 1，500ms 步数定时器）：调用 `ds3231_get_time()` 通过 `i2c_bus_read`，以及 `sh1106_update()` 直接 `i2c_master_cmd_begin`
+3. Timer Service 任务（2 分钟刷新定时器）：同上
+
+`sensor_task` 优先级（6）高于 Timer Service（1），可在定时器回调执行 I2C 操作时抢占，导致 I2C 总线状态被破坏。
+
+**后果**：
+1. **RTC 读取失败**：`ds3231_get_time()` 被 `sensor_task` 的 I2C 操作中断，返回 `ESP_FAIL`，UI 显示 `--/-- RTC`
+2. **OLED 花屏**：`sh1106_update()` 需要 32 次 I2C 事务（8 页 × 4 次），被中途抢占后页地址/列地址命令错乱，数据写入错误位置
+
+**解决方案**：
+1. 在 `i2c_bus.c` 中新增 `SemaphoreHandle_t s_i2c_mutex`，`i2c_bus_init()` 时创建
+2. `i2c_bus_read()` / `i2c_bus_write()` 前后加 `xSemaphoreTake/Give` 保护
+3. 新增 `i2c_bus_lock()` / `i2c_bus_unlock()` 公开接口，供绕过封装的驱动使用
+4. `sh1106.c` 中拆出 `sh1106_write_cmd_nolock()` 内部无锁版本
+5. `sh1106_write_cmd()` 加锁版本供单条命令使用
+6. `sh1106_update()` 用 `i2c_bus_lock(200)` 包裹整个 8 页循环，内部使用无锁版本，确保原子性
+
+**涉及文件**：
+- `components/drivers/common/include/i2c_bus.h`
+- `components/drivers/common/i2c_bus.c`
+- `components/drivers/sh1106/sh1106.c`
+
+---
+
+## ISSUE-033：切换至主界面始终读取不到 RTC 时间，需等待分钟变化才恢复
+
+**发现日期**：2026-02-19
+
+**原因**：
+两个问题叠加：
+
+1. **`sh1106_update()` 持锁时间过长（~30ms）**：ISSUE-032 修复中将整个 8 页 OLED 刷新包裹在单个 `i2c_bus_lock()` 中，持锁约 30ms。期间高优先级 `sensor_task`（优先级 6）的 I2C 操作被阻塞，释放后立即抢占。低优先级的 Timer Service / 按键任务中的 `ds3231_get_time()` 在 100ms 内仍可能竞争失败。
+
+2. **Home 页 RTC 读取失败后不会触发重绘**：`draw_home_page()` 中当 `ds3231_get_time()` 失败时，`s_home_last_minute` 不被更新（保留上次访问时的值）。500ms 定时器回调判断 `s_home_last_minute != rtc_time.minute` 时，若分钟未变则跳过重绘，导致 `--/-- RTC` 持续显示直到分钟变化（最多等 60 秒）。
+
+**后果**：
+- 每次切换到主界面初始显示 `--/-- RTC`
+- 必须等待分钟值变化后才能显示正确时间
+
+**解决方案**：
+1. `sh1106_update()` 从整体加锁改为**逐页加锁**：每页的 4 次 I2C 事务保持原子性（防花屏），页间释放锁让其他设备访问 I2C。最大持锁时间从 ~30ms 降至 ~4ms。
+2. `draw_home_page()` 的 else 分支添加 `s_home_last_minute = -1`，确保下次 500ms 定时器一定触发重绘。
+
+**涉及文件**：
+- `components/drivers/sh1106/sh1106.c`
+- `components/ui_manager/ui_manager.c`
+
+---

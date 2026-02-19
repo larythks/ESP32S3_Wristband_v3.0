@@ -89,7 +89,7 @@ esp_err_t tts_speak_number(int value)
 
 esp_err_t tts_speak_heart_rate(uint8_t bpm)
 {
-    ESP_LOGI(TAG, "Speaking heart rate: %u bpm", bpm);
+    ESP_LOGD(TAG, "Speaking heart rate: %u bpm", bpm);
     esp_err_t ret;
 
     /* "当前心率为" */
@@ -107,7 +107,7 @@ esp_err_t tts_speak_heart_rate(uint8_t bpm)
 
 esp_err_t tts_speak_spo2(uint8_t percent)
 {
-    ESP_LOGI(TAG, "Speaking SpO2: %u%%", percent);
+    ESP_LOGD(TAG, "Speaking SpO2: %u%%", percent);
     esp_err_t ret;
 
     /* "当前血氧为" */
@@ -125,7 +125,7 @@ esp_err_t tts_speak_spo2(uint8_t percent)
 
 esp_err_t tts_speak_steps(uint32_t steps)
 {
-    ESP_LOGI(TAG, "Speaking steps: %lu", (unsigned long)steps);
+    ESP_LOGD(TAG, "Speaking steps: %lu", (unsigned long)steps);
     esp_err_t ret;
 
     /* Clamp to 999 for speech */
@@ -146,7 +146,7 @@ esp_err_t tts_speak_steps(uint32_t steps)
 
 esp_err_t tts_speak_temperature(float temp)
 {
-    ESP_LOGI(TAG, "Speaking temperature: %.1f", temp);
+    ESP_LOGD(TAG, "Speaking temperature: %.1f", temp);
     esp_err_t ret;
 
     /* Split into integer and one decimal place */

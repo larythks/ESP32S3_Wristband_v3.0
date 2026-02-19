@@ -75,6 +75,7 @@ static voice_cmd_id_t map_command_id(int mn_cmd_id)
     case 2:  return VOICE_CMD_QUERY_STEPS;   /* "cha xun bu shu" */
     case 3:  return VOICE_CMD_QUERY_TEMP;    /* "cha xun wen du" */
     case 4:  return VOICE_CMD_CALL_FAMILY;   /* "hu jiao jia ren" */
+    case 5:  return VOICE_CMD_QUERY_TIME;    /* "cha xun shi jian" */
     default: return VOICE_CMD_NONE;
     }
 }
@@ -98,7 +99,7 @@ static esp_err_t register_speech_commands(void)
     esp_mn_commands_add(2, "cha xun bu shu");
     esp_mn_commands_add(3, "cha xun wen du");
     esp_mn_commands_add(4, "hu jiao jia ren");
-
+    esp_mn_commands_add(5, "cha xun shi jian");
     esp_mn_error_t *err = esp_mn_commands_update();
     if (err != NULL) {
         ESP_LOGW(TAG, "%d speech commands failed to parse", err->num);
@@ -168,7 +169,7 @@ static void handle_command_response(voice_cmd_id_t cmd)
 
     switch (cmd) {
     case VOICE_CMD_HELP:
-        ESP_LOGI(TAG, "Response: triggering manual alarm");
+        ESP_LOGD(TAG, "Response: triggering manual alarm");
         alarm_trigger(ALERT_TYPE_MANUAL, NULL);
         /* alarm_trigger starts async audio (alarm_help.wav).
          * Wait for it to finish before resuming feed task. */
@@ -177,7 +178,7 @@ static void handle_command_response(voice_cmd_id_t cmd)
 
     case VOICE_CMD_QUERY_HR: {
         health_status_t status = health_get_status();
-        ESP_LOGI(TAG, "Response: heart rate = %u bpm", status.heart_rate);
+        ESP_LOGD(TAG, "Response: heart rate = %u bpm", status.heart_rate);
         tts_speak_heart_rate(status.heart_rate);
         tts_speak_spo2(status.spo2);
         break;
@@ -185,20 +186,20 @@ static void handle_command_response(voice_cmd_id_t cmd)
 
     case VOICE_CMD_QUERY_STEPS: {
         uint32_t steps = pedometer_get_steps();
-        ESP_LOGI(TAG, "Response: steps = %lu", (unsigned long)steps);
+        ESP_LOGD(TAG, "Response: steps = %lu", (unsigned long)steps);
         tts_speak_steps(steps);
         break;
     }
 
     case VOICE_CMD_QUERY_TEMP: {
         health_status_t status = health_get_status();
-        ESP_LOGI(TAG, "Response: temperature = %.1f C", status.temperature);
+        ESP_LOGD(TAG, "Response: temperature = %.1f C", status.temperature);
         tts_speak_temperature(status.temperature);
         break;
     }
 
     case VOICE_CMD_CALL_FAMILY:
-        ESP_LOGI(TAG, "Response: calling family");
+        ESP_LOGD(TAG, "Response: calling family");
         alarm_trigger(ALERT_TYPE_CALL_FAMILY, NULL);
         /* alarm_trigger starts async audio (call_family.wav).
          * Wait for it to finish — do NOT call audio_play_wav again,
@@ -281,7 +282,7 @@ static void feed_task(void *arg)
         if (bits & FEED_BIT_PAUSE) {
             /* Release I2S so speaker can use it */
             audio_i2s_release();
-            ESP_LOGI(TAG, "Feed paused (I2S released for speaker)");
+            ESP_LOGD(TAG, "Feed paused (I2S released for speaker)");
 
             /* Notify detect task that we've paused */
             xEventGroupClearBits(s_feed_event, FEED_BIT_PAUSE);
@@ -297,7 +298,7 @@ static void feed_task(void *arg)
                 ESP_LOGE(TAG, "Failed to re-acquire I2S RX: %s", esp_err_to_name(ret));
                 break;
             }
-            ESP_LOGI(TAG, "Feed resumed (I2S RX re-acquired)");
+            ESP_LOGD(TAG, "Feed resumed (I2S RX re-acquired)");
 
             /* Reset AFE ring buffer after pause */
             s_afe_iface->reset_buffer(s_afe_data);
@@ -339,7 +340,7 @@ static void feed_task(void *arg)
                 int16_t v = feed_buf[i] > 0 ? feed_buf[i] : (int16_t)(-feed_buf[i]);
                 if (v > max_amp) max_amp = v;
             }
-            ESP_LOGI(TAG, "Feed: #%lu max_amp=%d errs=%lu",
+            ESP_LOGD(TAG, "Feed: #%lu max_amp=%d errs=%lu",
                      (unsigned long)feed_count, max_amp, (unsigned long)err_count);
         }
     }
@@ -390,7 +391,7 @@ static void detect_task(void *arg)
         /* Diagnostic: log detect task status every ~3s */
         detect_count++;
         if ((detect_count % 300) == 0) {
-            ESP_LOGI(TAG, "Detect: #%lu wakeup=%d vad=%d fails=%lu",
+            ESP_LOGD(TAG, "Detect: #%lu wakeup=%d vad=%d fails=%lu",
                      (unsigned long)detect_count,
                      res->wakeup_state,
                      res->vad_state,
@@ -411,7 +412,7 @@ static void detect_task(void *arg)
             mn_listening = true;
             mn_chunks = 0;
 
-            ESP_LOGI(TAG, "Entering command listening mode (timeout=%dms)", MN_DETECT_TIMEOUT_MS);
+            ESP_LOGD(TAG, "Entering command listening mode (timeout=%dms)", MN_DETECT_TIMEOUT_MS);
             continue;
         }
 
@@ -430,16 +431,13 @@ static void detect_task(void *arg)
                 ESP_LOGI(TAG, "*** COMMAND DETECTED: id=%d str='%s' prob=%.3f ***",
                          cmd_id, cmd_str ? cmd_str : "?", prob);
 
-                /* Map to voice_cmd_id_t */
                 voice_cmd_id_t vcmd = map_command_id(cmd_id);
 
-                /* Publish event and invoke callback */
                 if (vcmd != VOICE_CMD_NONE) {
                     publish_voice_cmd_event(vcmd);
                     if (s_user_cb != NULL) {
                         s_user_cb(vcmd);
                     }
-                    /* Execute command response (audio feedback) */
                     handle_command_response(vcmd);
                 }
 
@@ -452,7 +450,6 @@ static void detect_task(void *arg)
             else if (mn_state == ESP_MN_STATE_TIMEOUT || mn_chunks >= mn_max_chunks) {
                 ESP_LOGI(TAG, "Command listening timed out");
 
-                /* Play "not recognized" feedback */
                 pause_feed_task();
                 audio_play_wav("cmd_not_recognized");
                 resume_feed_task();

@@ -406,7 +406,7 @@ esp_err_t audio_play_wav(const char *filename)
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    ESP_LOGI(TAG, "Playing %s: %luHz %u-bit %uch, data=%lu bytes",
+    ESP_LOGD(TAG, "Playing %s: %luHz %u-bit %uch, data=%lu bytes",
              path, (unsigned long)sample_rate, bits_per_sample,
              num_channels, (unsigned long)data_size);
 
@@ -460,12 +460,8 @@ esp_err_t audio_play_wav(const char *filename)
     fclose(fp);
     audio_i2s_release();
 
-    if (s_stop_req) {
-        ESP_LOGI(TAG, "Playback stopped by request");
-        s_stop_req = false;
-    } else {
-        ESP_LOGI(TAG, "Playback finished: %s", path);
-    }
+    ESP_LOGD(TAG, "Playback %s: %s", s_stop_req ? "stopped" : "finished", path);
+    s_stop_req = false;
 
     return ESP_OK;
 }
@@ -478,7 +474,7 @@ void audio_set_i2s_tx_hooks(audio_i2s_hook_t pre_acquire,
 {
     s_pre_tx_hook  = pre_acquire;
     s_post_tx_hook = post_release;
-    ESP_LOGI(TAG, "I2S TX hooks registered");
+    ESP_LOGD(TAG, "I2S TX hooks registered");
 }
 
 /* ------------------------------------------------------------------ */

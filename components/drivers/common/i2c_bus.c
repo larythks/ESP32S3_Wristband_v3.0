@@ -5,9 +5,12 @@
 
 #include "i2c_bus.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "i2c_bus";
 static bool s_i2c_initialized = false;
+static SemaphoreHandle_t s_i2c_mutex = NULL;
 
 esp_err_t i2c_bus_init(void)
 {
@@ -38,6 +41,15 @@ esp_err_t i2c_bus_init(void)
     }
 
     s_i2c_initialized = true;
+
+    if (s_i2c_mutex == NULL) {
+        s_i2c_mutex = xSemaphoreCreateMutex();
+        if (s_i2c_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create I2C mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
     ESP_LOGI(TAG, "I2C bus initialized (SDA=%d, SCL=%d, freq=%dHz)",
              I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO, I2C_MASTER_FREQ_HZ);
 
@@ -76,6 +88,10 @@ void i2c_bus_scan(void)
 
 esp_err_t i2c_bus_write(uint8_t dev_addr, uint8_t reg_addr, const uint8_t *data, size_t len)
 {
+    if (s_i2c_mutex && xSemaphoreTake(s_i2c_mutex, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (dev_addr << 1) | I2C_MASTER_WRITE, true);
@@ -88,6 +104,10 @@ esp_err_t i2c_bus_write(uint8_t dev_addr, uint8_t reg_addr, const uint8_t *data,
     esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd,
                                           pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
+
+    if (s_i2c_mutex) {
+        xSemaphoreGive(s_i2c_mutex);
+    }
     return ret;
 }
 
@@ -95,6 +115,10 @@ esp_err_t i2c_bus_read(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, size_t
 {
     if (data == NULL || len == 0) {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_i2c_mutex && xSemaphoreTake(s_i2c_mutex, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
 
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -112,6 +136,10 @@ esp_err_t i2c_bus_read(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, size_t
     esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd,
                                           pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
+
+    if (s_i2c_mutex) {
+        xSemaphoreGive(s_i2c_mutex);
+    }
     return ret;
 }
 
@@ -123,4 +151,22 @@ esp_err_t i2c_bus_write_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
 esp_err_t i2c_bus_read_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data)
 {
     return i2c_bus_read(dev_addr, reg_addr, data, 1);
+}
+
+esp_err_t i2c_bus_lock(uint32_t timeout_ms)
+{
+    if (s_i2c_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_i2c_mutex, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
+void i2c_bus_unlock(void)
+{
+    if (s_i2c_mutex != NULL) {
+        xSemaphoreGive(s_i2c_mutex);
+    }
 }
