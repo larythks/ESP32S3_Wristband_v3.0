@@ -45,6 +45,14 @@ typedef struct {
 
 static alarm_ctx_t s_ctx = {0};
 
+/* 报警音频循环播放 */
+static TaskHandle_t s_loop_task = NULL;
+static volatile bool s_loop_active = false;
+static const char *s_loop_wav = NULL;
+
+#define ALARM_LOOP_GAP_MS  500   /* 两次播报之间间隔 */
+#define ALARM_LOOP_STACK   4096
+
 /* ============== alert_type_t -> ble_alarm_type_t 映射 ============== */
 
 /**
@@ -108,6 +116,31 @@ static void alarm_audio_play_async(const char *wav_name)
     audio_play_wav_async(wav_name);
 }
 
+/**
+ * @brief 报警音频循环播放任务
+ *
+ * 在 ALARMING 状态下持续循环播放指定 WAV 文件，
+ * 直到 s_loop_active 被置为 false。
+ */
+static void alarm_loop_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "Alarm loop started: %s", s_loop_wav ? s_loop_wav : "null");
+
+    while (s_loop_active && s_loop_wav != NULL) {
+        audio_play_wav(s_loop_wav);
+        /* 播放结束或被 audio_play_stop() 中断后检查是否继续 */
+        if (!s_loop_active) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(ALARM_LOOP_GAP_MS));
+    }
+
+    ESP_LOGI(TAG, "Alarm loop stopped");
+    s_loop_task = NULL;
+    vTaskDelete(NULL);
+}
+
 /* ============== 前向声明 ============== */
 
 static void enter_state(alarm_state_t new_state);
@@ -134,6 +167,12 @@ static void enter_state(alarm_state_t new_state)
     xTimerStop(s_ctx.pre_alarm_timer, 0);
     xTimerStop(s_ctx.acked_timer, 0);
 
+    /* 离开 ALARMING 状态时停止循环播放 */
+    if (old_state == ALARM_STATE_ALARMING) {
+        s_loop_active = false;
+        audio_play_stop();
+    }
+
     switch (new_state) {
     case ALARM_STATE_IDLE:
         ws2812_blink_stop();
@@ -149,10 +188,16 @@ static void enter_state(alarm_state_t new_state)
         break;
 
     case ALARM_STATE_ALARMING:
-        /* 红色快闪 + 发送 BLE Alarm + 音频播报 */
+        /* 红色快闪 + 发送 BLE Alarm + 循环播报 */
         ws2812_blink_start(255, 0, 0, BLINK_RED_INTERVAL);
         send_ble_alarm();
-        alarm_audio_play_async(get_alarm_wav(s_ctx.current_alarm.type));
+        audio_play_stop();  /* 停止 PRE_ALARM 阶段残留的异步音频 */
+        s_loop_wav = get_alarm_wav(s_ctx.current_alarm.type);
+        if (s_loop_wav != NULL) {
+            s_loop_active = true;
+            xTaskCreate(alarm_loop_task, "alarm_loop", ALARM_LOOP_STACK,
+                        NULL, 3, &s_loop_task);
+        }
         break;
 
     case ALARM_STATE_ACKED:

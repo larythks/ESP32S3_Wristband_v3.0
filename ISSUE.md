@@ -913,3 +913,49 @@ for (int i = 0; i < raw_samples && samples < num_samples; i += 2) {
 - `components/ui_manager/ui_manager.c`
 
 ---
+
+## ISSUE-034："查询时间"语音命令已注册但缺少响应处理
+
+**发现日期**：2026-02-19
+
+**原因**：
+`voice_cmd.c` 中已注册拼音命令 `"cha xun shi jian"`（id=5）并在 `map_command_id()` 中映射为 `VOICE_CMD_QUERY_TIME`，但 `handle_command_response()` 的 switch 语句中无对应 case，导致命中 `default` 分支播放 `cmd_not_recognized.wav`。同时 `simple_tts` 中缺少时间播报函数。
+
+**后果**：
+- 用户说 "查询时间" 被正确识别后，喇叭播放 "未识别命令" 而非当前时间
+- SPIFFS 中已有 `prefix_time.wav` 和 `time_dot.wav` 但从未被使用
+
+**解决方案**：
+1. `simple_tts.h/c` 新增 `tts_speak_time(uint8_t hour, uint8_t minute)`，播放 "当前时间为 XX 点 XX"
+2. `voice_cmd.c` 的 `handle_command_response()` 添加 `VOICE_CMD_QUERY_TIME` case，读取 DS3231 后调用 TTS 播报
+3. 分钟 < 10 时补播 "零"（如 "十四点零五"），符合中文表达习惯
+
+**涉及文件**：
+- `components/drivers/audio/include/simple_tts.h`
+- `components/drivers/audio/simple_tts.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-035：ALARMING 状态下报警音频仅播放一次
+
+**发现日期**：2026-02-19
+
+**原因**：
+`alarm_manager.c` 中 `enter_state(ALARM_STATE_ALARMING)` 调用 `alarm_audio_play_async()` 播放一次报警 WAV 文件后即结束。没有循环播放机制。
+
+**后果**：
+- 按下 SW1 或语音 "救命" 触发报警后，"我需要帮助" 仅播放一次
+- 报警状态持续（红灯闪烁、BLE Notify 已发送），但声音提示仅持续数秒
+- 在嘈杂环境或无人注意时，单次播放容易被忽略
+
+**解决方案**：
+将 ALARMING 状态的音频播放从单次异步播放改为循环播放任务：
+1. 新增 `alarm_loop_task()`：`while (s_loop_active)` 循环调用 `audio_play_wav()`，每次播完间隔 500ms
+2. `enter_state(ALARM_STATE_ALARMING)` 启动循环任务代替 `alarm_audio_play_async()`
+3. 离开 ALARMING 状态时设置 `s_loop_active = false` + `audio_play_stop()` 停止循环
+
+**涉及文件**：
+- `components/services/alarm_manager/alarm_manager.c`
+
+---
