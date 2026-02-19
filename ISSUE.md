@@ -823,3 +823,36 @@ gpio_set_level(AUDIO_DOUT_GPIO, 0);
 **涉及文件**：`components/drivers/audio/audio_player.c`
 
 ---
+
+## ISSUE-031：I2S MONO 模式下 L+R 交错数据导致语音识别失效
+
+**发现日期**：2026-02-19
+
+**原因**：
+ESP-IDF v5.2 的 I2S 标准模式在 ESP32-S3 上配置 `I2S_SLOT_MODE_MONO` 时，实际仍然捕获左右双声道交错数据（`[L0,R0,L1,R1,...]`）。`voice_cmd.c` 的 feed_task 请求读取 `num_samples * sizeof(int32_t)` = 640 字节（160 个 32-bit 样本），实际得到 80 个 L 样本 + 80 个 R 样本交错排列。由于 INMP441 的 L/R 引脚接 GND（左声道输出），右声道为零值。
+
+**后果**：
+1. feed_task 以 5ms/chunk 运行（应为 10ms/chunk），即 2 倍实时速率喂入 AFE ring buffer，导致 ring buffer 溢出
+2. 50% 的样本为右声道零值，WakeNet 接收到的音频数据有一半是静音
+3. 尽管 VAD（语音活动检测）能检测到语音信号（vad=1），但 WakeNet 始终无法识别唤醒词（wakeup=0）
+4. 语音识别功能完全失效
+
+**解决方案**：
+将 I2S 读取缓冲区扩大为 2 倍（`num_samples * 2 * sizeof(int32_t)` = 1280 字节），在 32-bit 转 16-bit 的转换循环中以步长 2 遍历，仅提取偶数索引（左声道）的样本：
+
+```c
+int read_size = num_samples * 2 * sizeof(int32_t);  // 1280 bytes
+// ...
+int raw_samples = bytes_read / sizeof(int32_t);
+int samples = 0;
+for (int i = 0; i < raw_samples && samples < num_samples; i += 2) {
+    int32_t s = raw_buf[i] >> 14;  // left channel + 4x gain
+    if (s > 32767)  s = 32767;
+    if (s < -32768) s = -32768;
+    feed_buf[samples++] = (int16_t)s;
+}
+```
+
+**涉及文件**：`components/services/voice_cmd/voice_cmd.c`
+
+---

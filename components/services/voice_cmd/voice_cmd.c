@@ -73,7 +73,8 @@ static voice_cmd_id_t map_command_id(int mn_cmd_id)
     case 0:  return VOICE_CMD_HELP;          /* "jiu ming" */
     case 1:  return VOICE_CMD_QUERY_HR;      /* "cha xun xin lv" */
     case 2:  return VOICE_CMD_QUERY_STEPS;   /* "cha xun bu shu" */
-    case 3:  return VOICE_CMD_CALL_FAMILY;   /* "hu jiao jia ren" */
+    case 3:  return VOICE_CMD_QUERY_TEMP;    /* "cha xun wen du" */
+    case 4:  return VOICE_CMD_CALL_FAMILY;   /* "hu jiao jia ren" */
     default: return VOICE_CMD_NONE;
     }
 }
@@ -95,7 +96,8 @@ static esp_err_t register_speech_commands(void)
     esp_mn_commands_add(0, "jiu ming");
     esp_mn_commands_add(1, "cha xun xin lv");
     esp_mn_commands_add(2, "cha xun bu shu");
-    esp_mn_commands_add(3, "hu jiao jia ren");
+    esp_mn_commands_add(3, "cha xun wen du");
+    esp_mn_commands_add(4, "hu jiao jia ren");
 
     esp_mn_error_t *err = esp_mn_commands_update();
     if (err != NULL) {
@@ -177,6 +179,7 @@ static void handle_command_response(voice_cmd_id_t cmd)
         health_status_t status = health_get_status();
         ESP_LOGI(TAG, "Response: heart rate = %u bpm", status.heart_rate);
         tts_speak_heart_rate(status.heart_rate);
+        tts_speak_spo2(status.spo2);
         break;
     }
 
@@ -184,6 +187,13 @@ static void handle_command_response(voice_cmd_id_t cmd)
         uint32_t steps = pedometer_get_steps();
         ESP_LOGI(TAG, "Response: steps = %lu", (unsigned long)steps);
         tts_speak_steps(steps);
+        break;
+    }
+
+    case VOICE_CMD_QUERY_TEMP: {
+        health_status_t status = health_get_status();
+        ESP_LOGI(TAG, "Response: temperature = %.1f C", status.temperature);
+        tts_speak_temperature(status.temperature);
         break;
     }
 
@@ -228,8 +238,10 @@ static void feed_task(void *arg)
     int total_ch  = s_afe_iface->get_total_channel_num(s_afe_data);
     int num_samples = chunksize * total_ch;
 
-    /* I2S RX is now 32-bit; allocate buffer for 32-bit reads */
-    int read_size = num_samples * sizeof(int32_t);
+    /* I2S RX is 32-bit and captures interleaved L+R even in MONO mode.
+     * Read 2x samples so we can de-interleave and extract left channel only.
+     * This gives us exactly num_samples left-channel frames per read. */
+    int read_size = num_samples * 2 * sizeof(int32_t);
     int32_t *raw_buf = malloc(read_size);
     if (raw_buf == NULL) {
         ESP_LOGE(TAG, "Failed to allocate raw feed buffer (%d bytes)", read_size);
@@ -259,6 +271,9 @@ static void feed_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
+
+    uint32_t feed_count = 0;
+    uint32_t err_count  = 0;
 
     while (s_running) {
         /* Check if we need to pause for audio playback */
@@ -292,21 +307,41 @@ static void feed_task(void *arg)
         size_t bytes_read = 0;
         ret = audio_i2s_read(raw_buf, read_size, &bytes_read, 1000);
         if (ret != ESP_OK || bytes_read == 0) {
+            err_count++;
+            if (err_count == 1 || (err_count % 500) == 0) {
+                ESP_LOGW(TAG, "Feed: i2s_read fail #%lu ret=%s bytes=%u",
+                         (unsigned long)err_count, esp_err_to_name(ret),
+                         (unsigned)bytes_read);
+            }
             continue;
         }
 
-        /* Convert 32-bit I2S samples to 16-bit for ESP-SR.
-         * INMP441 outputs 24-bit data left-aligned in 32-bit frame;
-         * taking the upper 16 bits (>> 16) preserves sufficient dynamic range. */
-        int samples = bytes_read / sizeof(int32_t);
-        if (samples > num_samples) {
-            samples = num_samples;
-        }
-        for (int i = 0; i < samples; i++) {
-            feed_buf[i] = (int16_t)(raw_buf[i] >> 16);
+        /* De-interleave L+R and convert 32-bit to 16-bit for ESP-SR.
+         * I2S captures interleaved [L0,R0,L1,R1,...] even in MONO mode.
+         * INMP441 (L/R=GND) outputs on left channel (even indices).
+         * Use >> 14 (4x gain) for low-amplitude INMP441 input. */
+        int raw_samples = bytes_read / sizeof(int32_t);
+        int samples = 0;
+        for (int i = 0; i < raw_samples && samples < num_samples; i += 2) {
+            int32_t s = raw_buf[i] >> 14;
+            if (s > 32767)  s = 32767;
+            if (s < -32768) s = -32768;
+            feed_buf[samples++] = (int16_t)s;
         }
 
         s_afe_iface->feed(s_afe_data, feed_buf);
+
+        /* Diagnostic: log mic amplitude every ~3s (300 chunks * 10ms = 3s) */
+        feed_count++;
+        if ((feed_count % 300) == 0) {
+            int16_t max_amp = 0;
+            for (int i = 0; i < samples; i++) {
+                int16_t v = feed_buf[i] > 0 ? feed_buf[i] : (int16_t)(-feed_buf[i]);
+                if (v > max_amp) max_amp = v;
+            }
+            ESP_LOGI(TAG, "Feed: #%lu max_amp=%d errs=%lu",
+                     (unsigned long)feed_count, max_amp, (unsigned long)err_count);
+        }
     }
 
     audio_i2s_release();
@@ -342,10 +377,24 @@ static void detect_task(void *arg)
     ESP_LOGI(TAG, "Detect: fetch_chunksize=%d sample_rate=%d mn_max_chunks=%d",
              fetch_chunksize, sample_rate, mn_max_chunks);
 
+    uint32_t detect_count = 0;
+    uint32_t fetch_fail   = 0;
+
     while (s_running) {
         afe_fetch_result_t *res = s_afe_iface->fetch(s_afe_data);
         if (res == NULL || res->ret_value == ESP_FAIL) {
+            fetch_fail++;
             continue;
+        }
+
+        /* Diagnostic: log detect task status every ~3s */
+        detect_count++;
+        if ((detect_count % 300) == 0) {
+            ESP_LOGI(TAG, "Detect: #%lu wakeup=%d vad=%d fails=%lu",
+                     (unsigned long)detect_count,
+                     res->wakeup_state,
+                     res->vad_state,
+                     (unsigned long)fetch_fail);
         }
 
         /* ---------- Wake word detection ---------- */

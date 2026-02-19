@@ -114,12 +114,12 @@ esp_err_t tts_speak_spo2(uint8_t percent)
     ret = audio_play_wav("prefix_spo2");
     if (ret != ESP_OK) return ret;
 
-    /* Number */
-    ret = tts_speak_number(percent);
-    if (ret != ESP_OK) return ret;
-
     /* "百分之" */
     ret = audio_play_wav("unit_percent");
+    if (ret != ESP_OK) return ret;
+
+    /* Number */
+    ret = tts_speak_number(percent);
     return ret;
 }
 
