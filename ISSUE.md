@@ -804,3 +804,22 @@ gpio_set_level(AUDIO_DOUT_GPIO, 0);
 **涉及文件**：`PROGRESS.md`
 
 ---
+
+## ISSUE-030：WAV 文件头格式不兼容导致语音播报和语音识别完全失效
+
+**发现日期**：2026-02-19
+
+**原因**：
+`audio_player.c` 中的 WAV 解析器使用固定 44 字节的 `wav_header_t` 结构体读取文件头，假设 `fmt` 块之后紧跟 `data` 块。但所有 31 个 WAV 文件由 FFmpeg（Lavf62.3.100）生成，在 `fmt` 和 `data` 块之间插入了 34 字节的 `LIST/INFO/ISFT` 元数据块，实际文件头为 78 字节。导致 `data_size` 字段读到的是 LIST 块内容而非真实 PCM 数据长度，PCM 数据起始位置偏移 34 字节，且 34 不是 2 的倍数（16-bit 采样 = 2 字节对齐），所有采样高低字节颠倒。
+
+**后果**：
+1. 语音播报：所有 WAV 播放产生噪声/失真，无法正常播放报警语音和 TTS 数字播报
+2. 语音识别：唤醒确认音和命令反馈音异常，I2S 资源释放时序被打乱，feed_task 长时间暂停导致 AFE ring buffer 数据过期，语音识别准确率大幅下降
+3. 报警系统：alarm_manager 触发的报警音频不可辨识
+
+**解决方案**：
+将 `audio_play_wav()` 的 WAV 头解析从固定 44 字节结构体改为 chunk 遍历模式：先读 12 字节 RIFF 容器头，然后循环读取 8 字节 chunk 头（4 字节 ID + 4 字节 size），遇到 `fmt ` 读取格式参数，遇到 `data` 记录数据长度并开始播放，其他 chunk（LIST、fact 等）直接跳过。
+
+**涉及文件**：`components/drivers/audio/audio_player.c`
+
+---

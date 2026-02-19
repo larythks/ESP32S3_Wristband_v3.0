@@ -28,24 +28,9 @@ static const char *TAG = "audio_player";
 #define AUDIO_DOUT_GPIO      GPIO_NUM_18   /* MAX98357A DIN */
 #define AUDIO_DIN_GPIO       GPIO_NUM_15   /* INMP441 SD   */
 
-/* ------------------------------------------------------------------ */
-/*  WAV header structure (44 bytes, standard PCM)                     */
-/* ------------------------------------------------------------------ */
-typedef struct __attribute__((packed)) {
-    char     riff_tag[4];       /* "RIFF" */
-    uint32_t file_size;         /* file size - 8 */
-    char     wave_tag[4];       /* "WAVE" */
-    char     fmt_tag[4];        /* "fmt " */
-    uint32_t fmt_size;          /* 16 for PCM */
-    uint16_t audio_format;      /* 1 = PCM */
-    uint16_t num_channels;      /* 1 = mono, 2 = stereo */
-    uint32_t sample_rate;       /* e.g. 16000 */
-    uint32_t byte_rate;         /* sample_rate * num_channels * bits/8 */
-    uint16_t block_align;       /* num_channels * bits/8 */
-    uint16_t bits_per_sample;   /* 16 */
-    char     data_tag[4];       /* "data" */
-    uint32_t data_size;         /* PCM data byte count */
-} wav_header_t;
+/* WAV chunk header: 4-byte ID + 4-byte size (little-endian) */
+#define WAV_CHUNK_HDR_SIZE  8
+#define WAV_FMT_MIN_SIZE    16
 
 /* ------------------------------------------------------------------ */
 /*  Module-level state                                                */
@@ -346,34 +331,84 @@ esp_err_t audio_play_wav(const char *filename)
         return ESP_ERR_NOT_FOUND;
     }
 
-    /* Read and validate WAV header */
-    wav_header_t hdr;
-    if (fread(&hdr, 1, sizeof(hdr), fp) != sizeof(hdr)) {
-        ESP_LOGE(TAG, "Failed to read WAV header: %s", path);
+    /* ---- Parse WAV by walking chunk list (handles non-standard headers) ---- */
+
+    /* 1. Read RIFF container header (12 bytes) */
+    uint8_t riff_hdr[12];
+    if (fread(riff_hdr, 1, 12, fp) != 12) {
+        ESP_LOGE(TAG, "Failed to read RIFF header: %s", path);
         fclose(fp);
         return ESP_FAIL;
     }
 
-    if (memcmp(hdr.riff_tag, "RIFF", 4) != 0 ||
-        memcmp(hdr.wave_tag, "WAVE", 4) != 0 ||
-        memcmp(hdr.fmt_tag,  "fmt ", 4) != 0) {
+    if (memcmp(riff_hdr, "RIFF", 4) != 0 || memcmp(riff_hdr + 8, "WAVE", 4) != 0) {
         ESP_LOGE(TAG, "Invalid WAV header: %s", path);
         fclose(fp);
         return ESP_FAIL;
     }
 
-    if (hdr.audio_format != 1) {
-        ESP_LOGE(TAG, "Unsupported WAV format (not PCM): %u", hdr.audio_format);
+    /* 2. Walk chunks to locate "fmt " and "data" */
+    uint16_t audio_format    = 0;
+    uint16_t num_channels    = 0;
+    uint32_t sample_rate     = 0;
+    uint16_t bits_per_sample = 0;
+    uint32_t data_size       = 0;
+    bool     found_fmt  = false;
+    bool     found_data = false;
+
+    uint8_t chunk_hdr[WAV_CHUNK_HDR_SIZE];
+
+    while (!found_data && fread(chunk_hdr, 1, WAV_CHUNK_HDR_SIZE, fp) == WAV_CHUNK_HDR_SIZE) {
+        uint32_t chunk_size = (uint32_t)chunk_hdr[4]       | ((uint32_t)chunk_hdr[5] << 8) |
+                              ((uint32_t)chunk_hdr[6] << 16) | ((uint32_t)chunk_hdr[7] << 24);
+
+        if (memcmp(chunk_hdr, "fmt ", 4) == 0) {
+            if (chunk_size < WAV_FMT_MIN_SIZE) {
+                ESP_LOGE(TAG, "fmt chunk too small: %lu", (unsigned long)chunk_size);
+                fclose(fp);
+                return ESP_FAIL;
+            }
+            uint8_t fmt[WAV_FMT_MIN_SIZE];
+            if (fread(fmt, 1, WAV_FMT_MIN_SIZE, fp) != WAV_FMT_MIN_SIZE) {
+                ESP_LOGE(TAG, "Failed to read fmt data: %s", path);
+                fclose(fp);
+                return ESP_FAIL;
+            }
+            audio_format    = (uint16_t)(fmt[0]  | (fmt[1] << 8));
+            num_channels    = (uint16_t)(fmt[2]  | (fmt[3] << 8));
+            sample_rate     = (uint32_t)fmt[4]  | ((uint32_t)fmt[5] << 8) |
+                              ((uint32_t)fmt[6] << 16) | ((uint32_t)fmt[7] << 24);
+            bits_per_sample = (uint16_t)(fmt[14] | (fmt[15] << 8));
+            /* Skip extra fmt bytes (e.g. cbSize for non-PCM) */
+            if (chunk_size > WAV_FMT_MIN_SIZE) {
+                fseek(fp, (long)(chunk_size - WAV_FMT_MIN_SIZE), SEEK_CUR);
+            }
+            found_fmt = true;
+        } else if (memcmp(chunk_hdr, "data", 4) == 0) {
+            data_size  = chunk_size;
+            found_data = true;
+            /* File position now points to the first PCM sample */
+        } else {
+            /* Skip unknown chunk (LIST, fact, etc.) */
+            fseek(fp, (long)chunk_size, SEEK_CUR);
+        }
+    }
+
+    if (!found_fmt || !found_data) {
+        ESP_LOGE(TAG, "WAV missing fmt or data chunk: %s", path);
+        fclose(fp);
+        return ESP_FAIL;
+    }
+
+    if (audio_format != 1) {
+        ESP_LOGE(TAG, "Unsupported WAV format (not PCM): %u", audio_format);
         fclose(fp);
         return ESP_ERR_NOT_SUPPORTED;
     }
 
     ESP_LOGI(TAG, "Playing %s: %luHz %u-bit %uch, data=%lu bytes",
-             path,
-             (unsigned long)hdr.sample_rate,
-             hdr.bits_per_sample,
-             hdr.num_channels,
-             (unsigned long)hdr.data_size);
+             path, (unsigned long)sample_rate, bits_per_sample,
+             num_channels, (unsigned long)data_size);
 
     /* Acquire I2S TX */
     esp_err_t ret = audio_i2s_acquire_tx();
@@ -383,9 +418,9 @@ esp_err_t audio_play_wav(const char *filename)
     }
 
     /* If WAV sample rate differs from default 16 kHz, reconfigure clock */
-    if (hdr.sample_rate != 16000) {
+    if (sample_rate != 16000) {
         i2s_channel_disable(s_i2s_handle);
-        i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(hdr.sample_rate);
+        i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
         i2s_channel_reconfig_std_clock(s_i2s_handle, &clk_cfg);
         i2s_channel_enable(s_i2s_handle);
     }
@@ -395,7 +430,7 @@ esp_err_t audio_play_wav(const char *filename)
     s_stop_req = false;
 
     uint8_t buf[1024];
-    uint32_t bytes_remaining = hdr.data_size;
+    uint32_t bytes_remaining = data_size;
     size_t bytes_written = 0;
 
     while (bytes_remaining > 0 && !s_stop_req) {
