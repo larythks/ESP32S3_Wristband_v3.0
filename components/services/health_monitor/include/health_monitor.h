@@ -23,7 +23,6 @@ extern "C" {
 
 // 血氧阈值 (%)
 #define SPO2_ALARM_LOW          90      // 血氧过低 (ALARM)
-#define SPO2_WARNING_LOW        92      // 血氧偏低 (WARNING)
 
 // 环境温度阈值 (°C)
 #define TEMP_ALARM_HIGH         35.0f   // 环境温度过高

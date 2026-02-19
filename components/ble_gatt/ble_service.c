@@ -7,6 +7,7 @@
 #include "ble_security.h"
 #include "ble_gatt_defs.h"
 #include "event_bus.h"
+#include "alarm_manager.h"
 #include "ds3231.h"
 
 #include "sensor_service.h"
@@ -31,6 +32,7 @@
 #include "freertos/task.h"
 
 #include <string.h>
+#include <limits.h>
 
 /* NimBLE store config init (未在公开头文件声明) */
 extern void ble_store_config_init(void);
@@ -53,6 +55,10 @@ static uint16_t s_status_val_handle    = 0;
 /* 时间偏移量 (秒): Unix时间戳 = esp_timer秒 + s_time_offset */
 static int64_t s_time_offset = 0;
 
+/* Telemetry 动态间隔 */
+static volatile uint32_t s_telemetry_interval_ms = BLE_TELEMETRY_INTERVAL_MS;
+static TaskHandle_t s_telemetry_task_handle = NULL;
+
 /* ============== 前向声明 ============== */
 
 static int ble_gap_event_handler(struct ble_gap_event *event, void *arg);
@@ -62,6 +68,7 @@ static void ble_host_task(void *param);
 static int ble_start_advertise(void);
 static void telemetry_task(void *param);
 static esp_err_t send_telemetry_now(void);
+static void on_sampling_mode_change(const event_t *event, void *user_data);
 
 /* GATT access 回调 */
 static int gatt_chr_access_telemetry(uint16_t conn_handle, uint16_t attr_handle,
@@ -192,7 +199,7 @@ static int gatt_chr_access_command(uint16_t conn_handle, uint16_t attr_handle,
         }
         ESP_LOGI(TAG, "ACK_ALARM: event_id=%lu, nonce=%lu",
                  (unsigned long)cmd->event_id, (unsigned long)cmd->nonce);
-        /* TODO: 对接 alarm_manager 确认告警 */
+        alarm_ack(cmd->event_id);
         return 0;
     }
 
@@ -314,7 +321,7 @@ static int gatt_chr_access_status(uint16_t conn_handle, uint16_t attr_handle,
         ble_status_pkt_t status = {
             .device_state = 1,   /* running */
             .ble_conn_count = s_connected ? 1 : 0,
-            .alarm_state = 0,    /* TODO: 从 alarm_manager 获取 */
+            .alarm_state = (uint8_t)alarm_get_state(),
         };
 
         int rc = os_mbuf_append(ctxt->om, &status, sizeof(status));
@@ -594,8 +601,36 @@ static void telemetry_task(void *param)
              BLE_TELEMETRY_INTERVAL_MS);
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(BLE_TELEMETRY_INTERVAL_MS));
+        uint32_t interval = s_telemetry_interval_ms;
+        /* 使用 xTaskNotifyWait 代替 vTaskDelay:
+         * - 正常情况等待 interval 超时后发送
+         * - 收到 notify 时立即重新计算间隔 */
+        xTaskNotifyWait(0, ULONG_MAX, NULL, pdMS_TO_TICKS(interval));
         send_telemetry_now();
+    }
+}
+
+/**
+ * 采样模式变更回调 - 切换 Telemetry 上报间隔
+ */
+static void on_sampling_mode_change(const event_t *event, void *user_data)
+{
+    (void)user_data;
+    sampling_mode_t mode = event->data.sampling.mode;
+
+    if (mode == SAMPLING_MODE_REALTIME) {
+        s_telemetry_interval_ms = BLE_TELEMETRY_REALTIME_INTERVAL_MS;
+        ESP_LOGI(TAG, "Telemetry interval -> %d ms (realtime)",
+                 BLE_TELEMETRY_REALTIME_INTERVAL_MS);
+    } else {
+        s_telemetry_interval_ms = BLE_TELEMETRY_INTERVAL_MS;
+        ESP_LOGI(TAG, "Telemetry interval -> %d ms (normal)",
+                 BLE_TELEMETRY_INTERVAL_MS);
+    }
+
+    /* 唤醒 telemetry 任务，立即应用新间隔 */
+    if (s_telemetry_task_handle != NULL) {
+        xTaskNotify(s_telemetry_task_handle, 0, eNoAction);
     }
 }
 
@@ -666,12 +701,15 @@ esp_err_t ble_service_init(void)
         BLE_TELEMETRY_TASK_STACK,
         NULL,
         BLE_TELEMETRY_TASK_PRIORITY,
-        NULL
+        &s_telemetry_task_handle
     );
     if (xret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create telemetry task");
         return ESP_ERR_NO_MEM;
     }
+
+    /* 订阅采样模式变更事件 */
+    event_subscribe(EVT_SAMPLING_MODE, on_sampling_mode_change, NULL);
 
     s_initialized = true;
     ESP_LOGI(TAG, "BLE service initialized, device name: %s", BLE_DEVICE_NAME);

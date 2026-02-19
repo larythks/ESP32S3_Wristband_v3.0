@@ -20,7 +20,7 @@
 | Week 3 | 迭代 3.1 后代码结构优化 | ✅ 已完成 | 2026-02-16 |
 | Week 3 | 迭代 3.2: I2S 音频播放 | ⚠️ 代码重构中（待实机验收） | 2026-02-18 |
 | Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | ⚠️ 代码重构中（待实机验收） | 2026-02-18 |
-| Week 3 | 迭代 3.4: 完整报警流程联调 | 🔲 待开始 | - |
+| Week 3 | 迭代 3.4: 完整报警流程联调 | ✅ 已完成 | 2026-02-19 |
 | Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | 🔲 待开始 | - |
 | Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | 🔲 待开始 | - |
 | Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | 🔲 待开始 | - |
@@ -926,4 +926,70 @@
   - [ ] RTC 读取失败时播放降级提示音
 - **备注**:
   - 语音命令拼音注册和枚举映射在迭代 3.3 中已完成，本次仅补充响应逻辑和 TTS 函数
+
+---
+
+### 2026-02-19 - 功能增强：ALARMING 状态报警音频循环播放
+
+- **迭代**: Week 3 - 迭代 3.1 功能增强
+- **状态**: ✅ 已完成（待实机验收）
+- **任务简述**: 将 ALARMING 状态的报警音频从单次播放改为循环播放，直到手动取消报警
+- **修改文件**:
+  - `components/services/alarm_manager/alarm_manager.c`（新增循环播放任务 + enter_state 改用循环机制）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过（二进制 0xf8500，app 分区 84% 空闲）
+  - [ ] 实机按 SW1 触发报警后 "我需要帮助" 持续循环播放
+  - [ ] 实机语音 "救命" 触发报警后音频持续循环
+  - [ ] SW1 长按取消报警后循环立即停止
+  - [ ] 跌倒预报警 → ALARMING 升级后也循环播放
+  - [ ] App ACK 确认后循环停止
+- **备注**:
+  - 对应问题记录：ISSUE-035
+  - 循环任务优先级 3，每次播完间隔 500ms 再重复
+  - 离开 ALARMING 状态时 `s_loop_active = false` + `audio_play_stop()` 双重保证停止
+
+---
+
+### 2026-02-19 - 迭代 3.4: 完整报警流程联调（团队协作完成）
+
+- **迭代**: Week 3 - 迭代 3.4
+- **状态**: ✅ 已完成（待实机验收）
+- **任务简述**: 报警缓存环形队列、BLE 重连补发、ACK 命令对接、Telemetry 实时频率切换、Status 特征完善、SPO2_WARNING 删除、跌倒预报警音频区分
+- **子任务**:
+  - **3.4-0 (developer-alarm)**: 删除 SPO2_WARNING — health_monitor.h 删除 SPO2_WARNING_LOW 宏、health_monitor.c 删除 WARNING 判定分支和引用
+  - **3.4-A (developer-alarm)**: 报警缓存环形队列 + alarm_ack(event_id) 签名变更 + BLE 重连补发任务 + PRE_ALARM 播放 "pre_alarm_fall" + ALARMING 跌倒播放 "alarm_help"
+  - **3.4-B (developer-ble)**: ACK_ALARM 命令调用 alarm_ack + Telemetry 实时频率切换 + Status 返回真实 alarm_state + BLE_ALARM_TYPE_SPO2_WARNING → RESERVED_8
+- **修改文件**:
+  - `components/services/health_monitor/include/health_monitor.h`（删除 SPO2_WARNING_LOW 宏）
+  - `components/services/health_monitor/health_monitor.c`（删除 SPO2 WARNING 判定分支、移除 publish_health_alert 中 SPO2_WARNING 引用）
+  - `components/services/alarm_manager/include/alarm_manager.h`（新增缓存配置宏、alarm_cache_entry_t 结构体、alarm_ack 签名变更、alarm_cache_find API）
+  - `components/services/alarm_manager/alarm_manager.c`（新增缓存环形队列、4 个内部缓存操作函数、send_ble_alarm 缓存、alarm_ack 带 event_id、BLE 重连补发任务、EVT_BLE_CONN 订阅、PRE_ALARM 音频改为 pre_alarm_fall、FALL wav 改为 alarm_help、更新枚举映射注释）
+  - `components/ble_gatt/include/ble_gatt_defs.h`（新增 BLE_TELEMETRY_REALTIME_INTERVAL_MS 宏、BLE_ALARM_TYPE_SPO2_WARNING → BLE_ALARM_TYPE_RESERVED_8）
+  - `components/ble_gatt/ble_service.c`（新增 alarm_manager.h 引用、ACK_ALARM 对接、Telemetry 动态间隔 + xTaskNotifyWait、采样模式变更回调、Status alarm_state 真实值）
+- **验收状态**: 待验收
+- **验收清单**:
+  - [x] `idf.py build` 编译通过，无错误无警告
+  - [ ] nRF Connect 订阅 FF02 后收到 Alarm Notify
+  - [ ] 模拟跌倒 → PRE_ALARM 黄灯闪烁 + 播放 "pre_alarm_fall" + 不发 BLE
+  - [ ] PRE_ALARM 期间按 SW1 取消 → 回到 IDLE
+  - [ ] 模拟跌倒 → 15s 未取消 → ALARMING 红灯快闪 + 循环播放 "alarm_help" + 发 BLE
+  - [ ] 报警期间断开 BLE 重新连接后 2s 内收到补发
+  - [ ] 通过 FF03 发送 ACK_ALARM 后 WS2812 绿色常亮
+  - [ ] 同一报警补发 5 次后不再重发
+  - [ ] 多次报警（>16 次）最旧记录被覆盖
+  - [ ] 传感器进入实时检测模式后 Telemetry 间隔变为 5s
+  - [ ] 恢复正常采样模式后 Telemetry 间隔恢复 120s
+  - [ ] 读取 FF04 Status 第 3 字节返回当前 alarm_state
+  - [ ] 血氧 91%（原 WARNING 区间）无告警产生
+- **编译结果**: 二进制 0xf8d30（~1019KB），app 分区 84% 空闲
+- **关键设计决策**:
+  - 报警缓存使用固定数组环形队列（N=16），不使用 NVS 持久化
+  - 补发任务为一次性任务（vTaskDelete），每次 BLE 重连创建新任务
+  - Telemetry 动态间隔使用 xTaskNotifyWait 替代 vTaskDelay，收到通知立即应用新间隔
+  - 所有缓存操作复用 alarm_manager 既有互斥锁保护
+- **备注**:
+  - 由四角色团队协作完成：team-lead（方案设计+协调+编译验证）、developer-alarm（缓存+补发）、developer-ble（ACK+Telemetry+Status）、tester（两轮代码审查）
+  - 两轮代码审查均通过，无阻塞性问题
+  - 测试员建议：快速断连/重连可能创建多个补发任务（可接受，各自独立运行并自行销毁）
 

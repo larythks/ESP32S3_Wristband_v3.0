@@ -913,3 +913,97 @@ for (int i = 0; i < raw_samples && samples < num_samples; i += 2) {
 - `components/ui_manager/ui_manager.c`
 
 ---
+
+## ISSUE-034："查询时间"语音命令已注册但缺少响应处理
+
+**发现日期**：2026-02-19
+
+**原因**：
+`voice_cmd.c` 中已注册拼音命令 `"cha xun shi jian"`（id=5）并在 `map_command_id()` 中映射为 `VOICE_CMD_QUERY_TIME`，但 `handle_command_response()` 的 switch 语句中无对应 case，导致命中 `default` 分支播放 `cmd_not_recognized.wav`。同时 `simple_tts` 中缺少时间播报函数。
+
+**后果**：
+- 用户说 "查询时间" 被正确识别后，喇叭播放 "未识别命令" 而非当前时间
+- SPIFFS 中已有 `prefix_time.wav` 和 `time_dot.wav` 但从未被使用
+
+**解决方案**：
+1. `simple_tts.h/c` 新增 `tts_speak_time(uint8_t hour, uint8_t minute)`，播放 "当前时间为 XX 点 XX"
+2. `voice_cmd.c` 的 `handle_command_response()` 添加 `VOICE_CMD_QUERY_TIME` case，读取 DS3231 后调用 TTS 播报
+3. 分钟 < 10 时补播 "零"（如 "十四点零五"），符合中文表达习惯
+
+**涉及文件**：
+- `components/drivers/audio/include/simple_tts.h`
+- `components/drivers/audio/simple_tts.c`
+- `components/services/voice_cmd/voice_cmd.c`
+
+---
+
+## ISSUE-035：ALARMING 状态下报警音频仅播放一次
+
+**发现日期**：2026-02-19
+
+**原因**：
+`alarm_manager.c` 中 `enter_state(ALARM_STATE_ALARMING)` 调用 `alarm_audio_play_async()` 播放一次报警 WAV 文件后即结束。没有循环播放机制。
+
+**后果**：
+- 按下 SW1 或语音 "救命" 触发报警后，"我需要帮助" 仅播放一次
+- 报警状态持续（红灯闪烁、BLE Notify 已发送），但声音提示仅持续数秒
+- 在嘈杂环境或无人注意时，单次播放容易被忽略
+
+**解决方案**：
+将 ALARMING 状态的音频播放从单次异步播放改为循环播放任务：
+1. 新增 `alarm_loop_task()`：`while (s_loop_active)` 循环调用 `audio_play_wav()`，每次播完间隔 500ms
+2. `enter_state(ALARM_STATE_ALARMING)` 启动循环任务代替 `alarm_audio_play_async()`
+3. 离开 ALARMING 状态时设置 `s_loop_active = false` + `audio_play_stop()` 停止循环
+
+**涉及文件**：
+- `components/services/alarm_manager/alarm_manager.c`
+
+---
+
+## ISSUE-036：SPO2_WARNING（血氧预警 90%-92%）功能无实际意义
+
+**发现日期**：2026-02-19
+
+**原因**：
+`health_monitor.c` 中 `check_alerts()` 函数对血氧 90%-92% 区间触发 `ALERT_TYPE_SPO2_WARNING`（WARNING 级别），该告警不走连续计数确认机制，立即触发。但此区间值波动频繁，容易产生误报，且 WARNING 级别报警对用户无实际帮助。
+
+**后果**：
+- 血氧在 90%-92% 之间频繁触发 WARNING 告警，影响用户体验
+- WARNING 级别与 ALARM 级别混用，增加系统复杂度
+
+**解决方案**：
+1. `event_bus.h`: `ALERT_TYPE_SPO2_WARNING` 位置改为 `ALERT_TYPE_PRE_ALARM_FALL`（复用枚举位置 6）
+2. `health_monitor.h`: 删除 `#define SPO2_WARNING_LOW 92` 宏
+3. `health_monitor.c`: 删除 `check_alerts()` 中 `else if (spo2 <= SPO2_WARNING_LOW)` 分支；移除 `publish_health_alert()` 中 `ALERT_TYPE_SPO2_WARNING` 引用
+4. `alarm_manager.c`: 移除 `alert_to_ble_alarm_type()` 和 `get_alarm_wav()` 中的 SPO2_WARNING 映射（已在之前完成）
+5. `ble_gatt_defs.h`: `BLE_ALARM_TYPE_SPO2_WARNING = 8` → `BLE_ALARM_TYPE_RESERVED_8 = 8`（保留编号避免协议偏移）
+
+**涉及文件**：
+- `components/services/event_bus/include/event_bus.h`
+- `components/services/health_monitor/include/health_monitor.h`
+- `components/services/health_monitor/health_monitor.c`
+- `components/services/alarm_manager/alarm_manager.c`
+- `components/ble_gatt/include/ble_gatt_defs.h`
+
+---
+
+## ISSUE-037：跌倒 PRE_ALARM 与 ALARMING 播放相同音频，无法区分
+
+**发现日期**：2026-02-19
+
+**原因**：
+`alarm_manager.c` 中 `enter_state(ALARM_STATE_PRE_ALARM)` 调用 `alarm_audio_play_async("alarm_fall")`，而 ALARMING 阶段 `get_alarm_wav(ALERT_TYPE_FALL)` 也返回 `"alarm_fall"`。两个阶段播放相同的音频文件，用户无法通过声音区分预报警与正式报警。
+
+**后果**：
+- PRE_ALARM 阶段用户听到的是与 ALARMING 相同的紧急语音，不知道可以按键取消
+- 15 秒确认窗口形同虚设，用户无法意识到当前处于可取消状态
+
+**解决方案**：
+1. `enter_state(ALARM_STATE_PRE_ALARM)`: 将 `alarm_audio_play_async("alarm_fall")` 改为 `alarm_audio_play_async("pre_alarm_fall")`
+2. `get_alarm_wav(ALERT_TYPE_FALL)`: 返回值从 `"alarm_fall"` 改为 `"alarm_help"`（ALARMING 阶段播放求救语音）
+3. 音频资源 `pre_alarm_fall.wav`（内容："检测到跌倒，如需取消请按报警键"）和 `alarm_help.wav`（内容："我需要帮助"）均已存在于 `spiffs_data/`
+
+**涉及文件**：
+- `components/services/alarm_manager/alarm_manager.c`
+
+---

@@ -19,10 +19,16 @@
 #include "esp_err.h"
 #include "event_bus.h"
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ===== 报警缓存配置 ===== */
+#define ALARM_CACHE_SIZE            16
+#define ALARM_RETRY_MAX             5
+#define ALARM_RETRY_INTERVAL_MS     2000
 
 /**
  * @brief 报警状态枚举
@@ -43,6 +49,20 @@ typedef struct {
     int16_t value;              // 触发值 (x10, 如体温 37.5 存为 375)
     uint32_t timestamp;         // 触发时间戳 (ms)
 } alarm_data_t;
+
+/**
+ * @brief 报警缓存条目
+ */
+typedef struct {
+    uint32_t event_id;
+    uint8_t  alarm_type;
+    int16_t  value;
+    uint32_t timestamp;
+    uint8_t  battery;
+    uint8_t  retry_count;
+    bool     acked;
+    bool     valid;
+} alarm_cache_entry_t;
 
 /**
  * @brief 初始化报警管理器
@@ -78,8 +98,19 @@ void alarm_cancel(void);
  *
  * 在 ALARMING 状态下收到 App 确认，进入 ACKED 状态。
  * ACKED 状态会在超时后自动回到 IDLE。
+ *
+ * @param event_id 报警事件 ID
  */
-void alarm_ack(void);
+void alarm_ack(uint32_t event_id);
+
+/**
+ * @brief 在缓存中查找指定 event_id 的报警条目
+ *
+ * @param event_id 报警事件 ID
+ * @param out 输出缓存条目
+ * @return true 找到, false 未找到
+ */
+bool alarm_cache_find(uint32_t event_id, alarm_cache_entry_t *out);
 
 /**
  * @brief 获取当前报警状态

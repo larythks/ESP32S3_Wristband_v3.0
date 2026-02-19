@@ -45,14 +45,27 @@ typedef struct {
 
 static alarm_ctx_t s_ctx = {0};
 
+/* ============== 报警缓存环形队列 ============== */
+static alarm_cache_entry_t s_cache[ALARM_CACHE_SIZE];
+static uint8_t s_cache_head  = 0;
+static uint8_t s_cache_count = 0;
+
+/* 报警音频循环播放 */
+static TaskHandle_t s_loop_task = NULL;
+static volatile bool s_loop_active = false;
+static const char *s_loop_wav = NULL;
+
+#define ALARM_LOOP_GAP_MS  500   /* 两次播报之间间隔 */
+#define ALARM_LOOP_STACK   4096
+
 /* ============== alert_type_t -> ble_alarm_type_t 映射 ============== */
 
 /**
  * @brief 将 event_bus 的 alert_type_t 映射到 BLE 的 ble_alarm_type_t
  *
  * 注意: 两个枚举的值不同！
- *   alert_type_t:     NONE=0, TEMP_HIGH=1, ..., SPO2_WARNING=6, FALL=7, MANUAL=8, CALL_FAMILY=9
- *   ble_alarm_type_t: NONE=0, TEMP_HIGH=1, ..., SPO2_LOW=5, FALL=6, MANUAL=7, SPO2_WARNING=8, CALL_FAMILY=9
+ *   alert_type_t:     NONE=0, TEMP_HIGH=1, ..., PRE_ALARM_FALL=6, FALL=7, MANUAL=8, CALL_FAMILY=9
+ *   ble_alarm_type_t: NONE=0, TEMP_HIGH=1, ..., SPO2_LOW=5, FALL=6, MANUAL=7, RESERVED_8=8, CALL_FAMILY=9
  */
 static uint8_t alert_to_ble_alarm_type(alert_type_t type)
 {
@@ -63,7 +76,6 @@ static uint8_t alert_to_ble_alarm_type(alert_type_t type)
     case ALERT_TYPE_HR_HIGH:        return BLE_ALARM_TYPE_HR_HIGH;
     case ALERT_TYPE_HR_LOW:         return BLE_ALARM_TYPE_HR_LOW;
     case ALERT_TYPE_SPO2_LOW:       return BLE_ALARM_TYPE_SPO2_LOW;
-    case ALERT_TYPE_SPO2_WARNING:   return BLE_ALARM_TYPE_SPO2_WARNING;
     case ALERT_TYPE_FALL:           return BLE_ALARM_TYPE_FALL;
     case ALERT_TYPE_MANUAL:         return BLE_ALARM_TYPE_MANUAL;
     case ALERT_TYPE_CALL_FAMILY:    return BLE_ALARM_TYPE_CALL_FAMILY;
@@ -79,16 +91,16 @@ static uint8_t alert_to_ble_alarm_type(alert_type_t type)
 static const char *get_alarm_wav(alert_type_t type)
 {
     switch (type) {
-    case ALERT_TYPE_TEMP_HIGH:    return "alarm_temp_high";
-    case ALERT_TYPE_TEMP_LOW:     return "alarm_temp_low";
-    case ALERT_TYPE_HR_HIGH:      return "alarm_hr_high";
-    case ALERT_TYPE_HR_LOW:       return "alarm_hr_low";
-    case ALERT_TYPE_SPO2_LOW:     return "alarm_spo2_low";
-    case ALERT_TYPE_SPO2_WARNING: return "alarm_spo2_low";
-    case ALERT_TYPE_FALL:         return "alarm_fall";
-    case ALERT_TYPE_MANUAL:       return "alarm_help";
-    case ALERT_TYPE_CALL_FAMILY:  return "call_family";
-    default:                      return NULL;
+    case ALERT_TYPE_TEMP_HIGH:      return "alarm_temp_high";
+    case ALERT_TYPE_TEMP_LOW:       return "alarm_temp_low";
+    case ALERT_TYPE_HR_HIGH:        return "alarm_hr_high";
+    case ALERT_TYPE_HR_LOW:         return "alarm_hr_low";
+    case ALERT_TYPE_SPO2_LOW:       return "alarm_spo2_low";
+    case ALERT_TYPE_PRE_ALARM_FALL: return "pre_alarm_fall";
+    case ALERT_TYPE_FALL:           return "alarm_help";
+    case ALERT_TYPE_MANUAL:         return "alarm_help";
+    case ALERT_TYPE_CALL_FAMILY:    return "call_family";
+    default:                        return NULL;
     }
 }
 
@@ -108,6 +120,31 @@ static void alarm_audio_play_async(const char *wav_name)
     audio_play_wav_async(wav_name);
 }
 
+/**
+ * @brief 报警音频循环播放任务
+ *
+ * 在 ALARMING 状态下持续循环播放指定 WAV 文件，
+ * 直到 s_loop_active 被置为 false。
+ */
+static void alarm_loop_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "Alarm loop started: %s", s_loop_wav ? s_loop_wav : "null");
+
+    while (s_loop_active && s_loop_wav != NULL) {
+        audio_play_wav(s_loop_wav);
+        /* 播放结束或被 audio_play_stop() 中断后检查是否继续 */
+        if (!s_loop_active) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(ALARM_LOOP_GAP_MS));
+    }
+
+    ESP_LOGI(TAG, "Alarm loop stopped");
+    s_loop_task = NULL;
+    vTaskDelete(NULL);
+}
+
 /* ============== 前向声明 ============== */
 
 static void enter_state(alarm_state_t new_state);
@@ -115,8 +152,74 @@ static void send_ble_alarm(void);
 static void publish_alarm_state_event(void);
 static void on_health_alert(const event_t *event, void *user_data);
 static void on_fall_detected(const event_t *event, void *user_data);
+static void on_ble_conn_change(const event_t *event, void *user_data);
+static void alarm_retry_task(void *arg);
 static void pre_alarm_timer_cb(TimerHandle_t timer);
 static void acked_timer_cb(TimerHandle_t timer);
+
+/* ============== 报警缓存操作 (调用前必须持有 s_ctx.mutex) ============== */
+
+static void alarm_cache_push(const ble_alarm_t *alarm)
+{
+    if (s_cache_count < ALARM_CACHE_SIZE) {
+        uint8_t idx = (s_cache_head + s_cache_count) % ALARM_CACHE_SIZE;
+        s_cache[idx].event_id    = alarm->event_id;
+        s_cache[idx].alarm_type  = alarm->alarm_type;
+        s_cache[idx].value       = alarm->value;
+        s_cache[idx].timestamp   = alarm->timestamp;
+        s_cache[idx].battery     = alarm->battery;
+        s_cache[idx].retry_count = 0;
+        s_cache[idx].acked       = false;
+        s_cache[idx].valid       = true;
+        s_cache_count++;
+    } else {
+        ESP_LOGW(TAG, "Cache full, dropping oldest unacked entry");
+        s_cache[s_cache_head].event_id    = alarm->event_id;
+        s_cache[s_cache_head].alarm_type  = alarm->alarm_type;
+        s_cache[s_cache_head].value       = alarm->value;
+        s_cache[s_cache_head].timestamp   = alarm->timestamp;
+        s_cache[s_cache_head].battery     = alarm->battery;
+        s_cache[s_cache_head].retry_count = 0;
+        s_cache[s_cache_head].acked       = false;
+        s_cache[s_cache_head].valid       = true;
+        s_cache_head = (s_cache_head + 1) % ALARM_CACHE_SIZE;
+    }
+}
+
+static void alarm_cache_ack_by_id(uint32_t event_id)
+{
+    for (uint8_t i = 0; i < s_cache_count; i++) {
+        uint8_t idx = (s_cache_head + i) % ALARM_CACHE_SIZE;
+        if (s_cache[idx].valid && s_cache[idx].event_id == event_id) {
+            s_cache[idx].acked = true;
+            return;
+        }
+    }
+}
+
+static uint8_t alarm_cache_get_unacked(alarm_cache_entry_t *out, uint8_t max_count)
+{
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < s_cache_count && n < max_count; i++) {
+        uint8_t idx = (s_cache_head + i) % ALARM_CACHE_SIZE;
+        if (s_cache[idx].valid && !s_cache[idx].acked &&
+            s_cache[idx].retry_count < ALARM_RETRY_MAX) {
+            out[n++] = s_cache[idx];
+        }
+    }
+    return n;
+}
+
+static void alarm_cache_increment_retry(uint32_t event_id)
+{
+    for (uint8_t i = 0; i < s_cache_count; i++) {
+        uint8_t idx = (s_cache_head + i) % ALARM_CACHE_SIZE;
+        if (s_cache[idx].valid && s_cache[idx].event_id == event_id) {
+            s_cache[idx].retry_count++;
+            return;
+        }
+    }
+}
 
 /* ============== 状态切换核心 (调用前必须已持有互斥锁) ============== */
 
@@ -134,6 +237,12 @@ static void enter_state(alarm_state_t new_state)
     xTimerStop(s_ctx.pre_alarm_timer, 0);
     xTimerStop(s_ctx.acked_timer, 0);
 
+    /* 离开 ALARMING 状态时停止循环播放 */
+    if (old_state == ALARM_STATE_ALARMING) {
+        s_loop_active = false;
+        audio_play_stop();
+    }
+
     switch (new_state) {
     case ALARM_STATE_IDLE:
         ws2812_blink_stop();
@@ -145,14 +254,20 @@ static void enter_state(alarm_state_t new_state)
         /* 黄色闪烁，启动 15 秒倒计时 */
         ws2812_blink_start(255, 165, 0, BLINK_YELLOW_INTERVAL);
         xTimerStart(s_ctx.pre_alarm_timer, 0);
-        alarm_audio_play_async("alarm_fall");
+        alarm_audio_play_async("pre_alarm_fall");
         break;
 
     case ALARM_STATE_ALARMING:
-        /* 红色快闪 + 发送 BLE Alarm + 音频播报 */
+        /* 红色快闪 + 发送 BLE Alarm + 循环播报 */
         ws2812_blink_start(255, 0, 0, BLINK_RED_INTERVAL);
         send_ble_alarm();
-        alarm_audio_play_async(get_alarm_wav(s_ctx.current_alarm.type));
+        audio_play_stop();  /* 停止 PRE_ALARM 阶段残留的异步音频 */
+        s_loop_wav = get_alarm_wav(s_ctx.current_alarm.type);
+        if (s_loop_wav != NULL) {
+            s_loop_active = true;
+            xTaskCreate(alarm_loop_task, "alarm_loop", ALARM_LOOP_STACK,
+                        NULL, 3, &s_loop_task);
+        }
         break;
 
     case ALARM_STATE_ACKED:
@@ -187,6 +302,9 @@ static void send_ble_alarm(void)
     } else {
         ESP_LOGW(TAG, "BLE Alarm failed: %s", esp_err_to_name(ret));
     }
+
+    /* 缓存报警（无论 Notify 是否成功，断连时也需要缓存以便补发） */
+    alarm_cache_push(&pkt);
 }
 
 /* ============== 事件总线状态发布 ============== */
@@ -281,6 +399,59 @@ static void on_fall_detected(const event_t *event, void *user_data)
     alarm_trigger(ALERT_TYPE_FALL, &data);
 }
 
+/* ============== BLE 重连补发 ============== */
+
+static void on_ble_conn_change(const event_t *event, void *user_data)
+{
+    (void)user_data;
+    uint8_t conn_state = event->data.raw[0];
+    if (conn_state == BLE_CONN_STATE_CONNECTED) {
+        xTaskCreate(alarm_retry_task, "alarm_retry", 3072, NULL, 2, NULL);
+    }
+}
+
+static void alarm_retry_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    alarm_cache_entry_t entries[ALARM_CACHE_SIZE];
+
+    xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+    uint8_t count = alarm_cache_get_unacked(entries, ALARM_CACHE_SIZE);
+    xSemaphoreGive(s_ctx.mutex);
+
+    ESP_LOGI(TAG, "Retry: %d unacked alarms to resend", count);
+
+    for (uint8_t i = 0; i < count; i++) {
+        if (!ble_is_connected()) break;
+
+        ble_alarm_t pkt = {
+            .event_id   = entries[i].event_id,
+            .alarm_type = entries[i].alarm_type,
+            .value      = entries[i].value,
+            .battery    = entries[i].battery,
+            .timestamp  = entries[i].timestamp,
+        };
+
+        esp_err_t ret = ble_notify_alarm(&pkt);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Retried alarm id=%lu (%d/%d)",
+                     (unsigned long)entries[i].event_id,
+                     entries[i].retry_count + 1, ALARM_RETRY_MAX);
+        }
+
+        xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+        alarm_cache_increment_retry(entries[i].event_id);
+        xSemaphoreGive(s_ctx.mutex);
+
+        vTaskDelay(pdMS_TO_TICKS(ALARM_RETRY_INTERVAL_MS));
+    }
+
+    ESP_LOGI(TAG, "Retry task done");
+    vTaskDelete(NULL);
+}
+
 /* ============== 公共 API ============== */
 
 esp_err_t alarm_manager_init(void)
@@ -330,6 +501,7 @@ esp_err_t alarm_manager_init(void)
     /* 订阅事件总线 */
     event_subscribe(EVT_HEALTH_ALERT, on_health_alert, NULL);
     event_subscribe(EVT_FALL_DETECTED, on_fall_detected, NULL);
+    event_subscribe(EVT_BLE_CONN, on_ble_conn_change, NULL);
 
     s_ctx.initialized = true;
     ESP_LOGI(TAG, "Alarm manager initialized");
@@ -408,7 +580,7 @@ void alarm_cancel(void)
     xSemaphoreGive(s_ctx.mutex);
 }
 
-void alarm_ack(void)
+void alarm_ack(uint32_t event_id)
 {
     if (!s_ctx.initialized) {
         return;
@@ -418,6 +590,8 @@ void alarm_ack(void)
         ESP_LOGW(TAG, "Failed to acquire mutex in alarm_ack");
         return;
     }
+
+    alarm_cache_ack_by_id(event_id);
 
     if (s_ctx.state == ALARM_STATE_ALARMING) {
         ESP_LOGI(TAG, "Alarm acknowledged");
@@ -441,4 +615,24 @@ alarm_state_t alarm_get_state(void)
         state = s_ctx.state;  /* 降级: 无锁读取 */
     }
     return state;
+}
+
+bool alarm_cache_find(uint32_t event_id, alarm_cache_entry_t *out)
+{
+    if (!s_ctx.initialized || out == NULL) {
+        return false;
+    }
+    bool found = false;
+    if (xSemaphoreTake(s_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        for (uint8_t i = 0; i < s_cache_count; i++) {
+            uint8_t idx = (s_cache_head + i) % ALARM_CACHE_SIZE;
+            if (s_cache[idx].valid && s_cache[idx].event_id == event_id) {
+                *out = s_cache[idx];
+                found = true;
+                break;
+            }
+        }
+        xSemaphoreGive(s_ctx.mutex);
+    }
+    return found;
 }

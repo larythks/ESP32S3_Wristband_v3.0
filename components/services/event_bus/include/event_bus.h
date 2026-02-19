@@ -111,7 +111,7 @@ typedef enum {
     ALERT_TYPE_HR_HIGH,         // 心率过高
     ALERT_TYPE_HR_LOW,          // 心率过低
     ALERT_TYPE_SPO2_LOW,        // 血氧过低
-    ALERT_TYPE_SPO2_WARNING,    // 血氧预警
+    ALERT_TYPE_PRE_ALARM_FALL,  // 跌倒预报警
     ALERT_TYPE_FALL,            // 跌倒
     ALERT_TYPE_MANUAL,          // 手动报警 (SW1)
     ALERT_TYPE_CALL_FAMILY      // 呼叫家属

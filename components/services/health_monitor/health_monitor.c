@@ -545,14 +545,6 @@ static void check_alerts(uint32_t timestamp)
                         }
                     }
                 }
-            } else if (spo2 <= SPO2_WARNING_LOW) {
-                // WARNING 级别（立即触发，不走计数制）
-                if (new_level < ALERT_LEVEL_WARNING) {
-                    new_alert = ALERT_TYPE_SPO2_WARNING;
-                    new_level = ALERT_LEVEL_WARNING;
-                    alert_value = spo2 * 10;
-                }
-                // WARNING 不影响 spo2_in_alert 状态
             } else {
                 // 恢复正常：清除告警状态
                 s_ctx.alert.spo2_in_alert = false;
@@ -592,7 +584,7 @@ static void publish_health_alert(alert_type_t type, alert_level_t level, int16_t
     if (type == ALERT_TYPE_TEMP_HIGH || type == ALERT_TYPE_TEMP_LOW) {
         sensor_mask = SENSOR_TEMP;
     } else if (type == ALERT_TYPE_HR_HIGH || type == ALERT_TYPE_HR_LOW ||
-               type == ALERT_TYPE_SPO2_LOW || type == ALERT_TYPE_SPO2_WARNING) {
+               type == ALERT_TYPE_SPO2_LOW) {
         sensor_mask = SENSOR_HR_SPO2;
     }
 

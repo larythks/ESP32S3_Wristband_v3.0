@@ -275,10 +275,9 @@ Offset  Size  Field        Type      Unit
 2       1     heart_rate   uint8     bpm
 3       1     spo2         uint8     %
 4       4     steps        uint32    count
-8       1     battery      uint8     %
-9       1     data_valid   uint8     bitmap
-10      4     timestamp    uint32    Unix秒
-14      6     reserved     -         -
+8       1     data_valid   uint8     bitmap
+9       4     timestamp    uint32    Unix秒
+13      6     reserved     -         -
 ```
 
 **Alarm 数据包格式 (16 bytes)**:
@@ -287,9 +286,8 @@ Offset  Size  Field        Type      Description
 0       4     event_id     uint32    唯一事件ID
 4       1     alarm_type   uint8     1=环境温度高 2=环境温度低 3=心率高 4=心率低 5=血氧低 6=跌倒 7=手动 8=血氧预警(WARNING) 9=呼叫家人
 5       2     value        int16     触发值(×10)
-7       1     battery      uint8     电量%
-8       4     timestamp    uint32    Unix秒
-12      4     reserved     -         -
+7       4     timestamp    uint32    Unix秒
+11      4     reserved     -         -
 ```
 
 **Command 类型**:
