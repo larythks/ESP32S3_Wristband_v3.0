@@ -844,7 +844,7 @@ I2C device found at 0x68 (DS3231)
    - 使用 `tools/generate_audio.py` 生成 WAV 文件（微软晓晓 TTS）。
    - 包含：报警语、反馈语、数字拼接片段（0-9, 10, 100, 单位等）。
 2. **I2S 驱动开发**：
-   - 配置 MAX98357A (BCLK=GPIO10, LRCK=GPIO11, DIN=GPIO12)。
+   - 配置 MAX98357A (BCLK=GPIO17, LRCK=GPIO16, DIN=GPIO18)。
    - 实现 DMA 缓冲区与 `i2s_write` 调用。
 3. **音频播放器实现**：
    - 实现 `wav_player`：解析 WAV 头，读取 SPIFFS 文件流。

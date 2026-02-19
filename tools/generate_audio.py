@@ -42,12 +42,14 @@ AUDIO_FILES = [
     ("prefix_steps",        "当前步数为"),
     ("prefix_temp",         "当前环境温度为"),
     ("prefix_spo2",         "当前血氧为"),
+    ("prefix_time",         "当前时间是"),
     
     # --- 4. 单位 ---
     ("unit_bpm",            "次每分钟"),
     ("unit_steps",          "步"),
     ("unit_degree",         "摄氏度"),
     ("unit_percent",        "百分之"),
+    ("time_dot",            "点"),  # 用于时间 "3点45"
     
     # --- 5. 数字 (0-10, 100) ---
     ("num_0",               "零"),

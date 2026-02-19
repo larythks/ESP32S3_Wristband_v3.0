@@ -11,8 +11,10 @@
 #include "ble_service.h"
 #include "ble_gatt_defs.h"
 #include "ws2812.h"
+#include "audio_player.h"
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/timers.h"
 #include "freertos/semphr.h"
 
@@ -69,6 +71,43 @@ static uint8_t alert_to_ble_alarm_type(alert_type_t type)
     }
 }
 
+/* ============== 音频播放辅助 ============== */
+
+/**
+ * @brief 根据 alert_type 返回对应的 WAV 文件名（字符串字面量）
+ */
+static const char *get_alarm_wav(alert_type_t type)
+{
+    switch (type) {
+    case ALERT_TYPE_TEMP_HIGH:    return "alarm_temp_high";
+    case ALERT_TYPE_TEMP_LOW:     return "alarm_temp_low";
+    case ALERT_TYPE_HR_HIGH:      return "alarm_hr_high";
+    case ALERT_TYPE_HR_LOW:       return "alarm_hr_low";
+    case ALERT_TYPE_SPO2_LOW:     return "alarm_spo2_low";
+    case ALERT_TYPE_SPO2_WARNING: return "alarm_spo2_low";
+    case ALERT_TYPE_FALL:         return "alarm_fall";
+    case ALERT_TYPE_MANUAL:       return "alarm_help";
+    case ALERT_TYPE_CALL_FAMILY:  return "call_family";
+    default:                      return NULL;
+    }
+}
+
+/**
+ * @brief 在独立任务中启动报警音频播放（不阻塞调用者）
+ *
+ * Uses audio_play_wav_async() which pre-sets s_playing to avoid race
+ * conditions with audio_wait_done().
+ */
+static void alarm_audio_play_async(const char *wav_name)
+{
+    if (wav_name == NULL) {
+        return;
+    }
+    /* 先停止当前播放（如果有） */
+    audio_play_stop();
+    audio_play_wav_async(wav_name);
+}
+
 /* ============== 前向声明 ============== */
 
 static void enter_state(alarm_state_t new_state);
@@ -99,18 +138,21 @@ static void enter_state(alarm_state_t new_state)
     case ALARM_STATE_IDLE:
         ws2812_blink_stop();
         ws2812_off();
+        audio_play_stop();
         break;
 
     case ALARM_STATE_PRE_ALARM:
         /* 黄色闪烁，启动 15 秒倒计时 */
         ws2812_blink_start(255, 165, 0, BLINK_YELLOW_INTERVAL);
         xTimerStart(s_ctx.pre_alarm_timer, 0);
+        alarm_audio_play_async("alarm_fall");
         break;
 
     case ALARM_STATE_ALARMING:
-        /* 红色快闪 + 发送 BLE Alarm */
+        /* 红色快闪 + 发送 BLE Alarm + 音频播报 */
         ws2812_blink_start(255, 0, 0, BLINK_RED_INTERVAL);
         send_ble_alarm();
+        alarm_audio_play_async(get_alarm_wav(s_ctx.current_alarm.type));
         break;
 
     case ALARM_STATE_ACKED:

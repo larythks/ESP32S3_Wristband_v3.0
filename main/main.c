@@ -20,6 +20,8 @@
 #include "ble_service.h"
 #include "ble_gatt_defs.h"
 #include "nvs_flash.h"
+#include "audio_player.h"
+#include "voice_cmd.h"
 
 static const char *TAG = "main";
 
@@ -194,6 +196,15 @@ void app_main(void)
         ESP_LOGE(TAG, "WS2812 init failed!");
     }
 
+    // 初始化音频播放器 (SPIFFS 挂载 + I2S mutex)
+    bool audio_ok = false;
+    ret = audio_player_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Audio player init failed! Voice features disabled.");
+    } else {
+        audio_ok = true;
+    }
+
     // 初始化报警管理器
     ret = alarm_manager_init();
     if (ret != ESP_OK) {
@@ -260,9 +271,26 @@ void app_main(void)
     // 订阅 BLE 连接状态事件
     event_subscribe(EVT_BLE_CONN, ble_conn_handler, NULL);
 
+    // 初始化语音命令模块 (ESP-SR) — 依赖 audio_player
+    // 如果 audio_player 初始化失败，跳过语音功能以避免"看起来在运行但语音不可用"
+    if (audio_ok) {
+        ret = voice_cmd_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Voice command init failed! Voice features disabled.");
+        } else {
+            ret = voice_cmd_start();
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Voice command start failed!");
+            }
+        }
+    } else {
+        ESP_LOGW(TAG, "Skipping voice_cmd (audio_player not available)");
+    }
+
     ESP_LOGI(TAG, "System initialization complete.");
     ESP_LOGI(TAG, "Press SW2 to switch pages, long press SW2 for manual measure.");
     ESP_LOGI(TAG, "Press SW1 to trigger/cancel alarm.");
+    ESP_LOGI(TAG, "Say 'Hi Lexin' to activate voice commands.");
 
     // 主循环：保持系统运行，按键和 UI 由各自模块处理
     while (1) {
