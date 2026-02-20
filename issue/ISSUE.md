@@ -1244,3 +1244,45 @@ DS18B20 温度传感器每 30 秒采样一次（`SENSOR_TEMP_NORMAL_INTERVAL = 3
 
 **涉及文件**：
 - `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-046：启动后 30 秒内温度显示 0°C — MEASURE_VALID 枚举零值 + UI 刷新间隔过长
+
+**发现日期**：2026-02-20
+
+**原因**：
+两个问题叠加导致启动后 30 秒内温度持续显示 0：
+
+1. **`MEASURE_VALID = 0` 与 memset 冲突**：`health_monitor.c:health_monitor_init()` 中 `memset(&s_ctx, 0, sizeof(s_ctx))` 将整个上下文清零，包括 `s_ctx.status.temperature = 0.0f` 和 `s_ctx.status.temp_validity = 0`。由于 `MEASURE_VALID` 的枚举值恰好是 0，清零后 UI 侧 `health_get_status()` 返回的 `temp_validity == MEASURE_VALID`，判定温度有效，显示 `0.0C` 而非预期的 `--.-C`。
+
+2. **UI 温度刷新间隔 30 秒无条件等待**：`ui_manager.c` 中 `temp_refresh_counter` 初始值 56，首次触发在 ~2 秒（计数到 60），但此次可能仍在传感器数据到达前。首次触发后计数器重置为 0，下一次刷新需要再等 30 秒（60 × 500ms），期间即使真实温度已可用也不会更新显示。
+
+**后果**：
+- 系统启动后 OLED 主页温度区域显示 `0.0C` 长达 30 秒
+- 实际 DS18B20 在启动约 2 秒后已采集到有效温度数据，但 UI 未及时刷新
+
+**解决方案**：
+
+1. **`health_monitor.c`**：`memset` 后显式设置 `s_ctx.status.temp_validity = MEASURE_INVALID_NO_SIGNAL`，使启动时 UI 显示 `--.-C` 而非误导性的 `0.0C`。
+
+2. **`ui_manager.c`**：在温度刷新路径中，`draw_home_page()` 执行后检查温度有效性。若 `temp_validity != MEASURE_VALID`，将 `temp_refresh_counter` 设为 `temp_refresh_cycles - 6`（3 秒后重试），而非等待完整的 30 秒周期。确保真实温度数据一到达就能在数秒内显示。
+
+```c
+// health_monitor.c
+memset(&s_ctx, 0, sizeof(s_ctx));
+s_ctx.status.temp_validity = MEASURE_INVALID_NO_SIGNAL;
+
+// ui_manager.c
+if (++temp_refresh_counter >= temp_refresh_cycles) {
+    temp_refresh_counter = 0;
+    draw_home_page(...);
+    if (health_get_status().temp_validity != MEASURE_VALID) {
+        temp_refresh_counter = temp_refresh_cycles - 6;  // 3秒后重试
+    }
+}
+```
+
+**涉及文件**：
+- `components/services/health_monitor/health_monitor.c`
+- `components/ui_manager/ui_manager.c`
