@@ -25,6 +25,9 @@ static const char *TAG = "ui_manager";
 #define UI_TASK_STACK_SIZE  4096
 #define UI_TASK_PRIORITY    2       // 高于 Timer Service(1)，低于 sensor_task(6)
 #define UI_NOTIFY_REFRESH   (1 << 0)
+/* HOME 页 RTC 检查周期：20 * 500ms = 10s */
+#define UI_HOME_RTC_SYNC_CYCLES   20
+#define UI_HOME_LOCAL_TICK_CYCLES 2
 
 static TaskHandle_t s_ui_task_handle = NULL;       // UI 刷新任务句柄
 static SemaphoreHandle_t s_ui_mutex = NULL;        // UI 绘制互斥锁
@@ -42,6 +45,67 @@ static ui_page_t s_current_page = UI_PAGE_HOME;
 static bool s_manual_measuring = false;
 static ui_page_t s_page_before_measure = UI_PAGE_HOME;
 static int s_home_last_minute = -1;
+static ds3231_time_t s_home_cached_time = {0};
+static bool s_home_cached_time_valid = false;
+
+static bool is_leap_year(uint16_t year)
+{
+    return ((year % 4U) == 0U && (year % 100U) != 0U) || ((year % 400U) == 0U);
+}
+
+static uint8_t days_in_month(uint16_t year, uint8_t month)
+{
+    static const uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month < 1 || month > 12) {
+        return 31;
+    }
+    if (month == 2 && is_leap_year(year)) {
+        return 29;
+    }
+    return days[month - 1];
+}
+
+static void home_time_add_one_second(ds3231_time_t *time)
+{
+    if (time == NULL) {
+        return;
+    }
+
+    if (++time->second < 60) {
+        return;
+    }
+    time->second = 0;
+
+    if (++time->minute < 60) {
+        return;
+    }
+    time->minute = 0;
+
+    if (++time->hour < 24) {
+        return;
+    }
+    time->hour = 0;
+
+    uint8_t dim = days_in_month(time->year, time->month);
+    if (++time->day > dim) {
+        time->day = 1;
+        if (++time->month > 12) {
+            time->month = 1;
+            if (++time->year > 2099) {
+                time->year = 2000;
+            }
+        }
+    }
+
+    if (time->day_of_week < 1 || time->day_of_week > 7) {
+        time->day_of_week = 1;
+    } else {
+        time->day_of_week++;
+        if (time->day_of_week > 7) {
+            time->day_of_week = 1;
+        }
+    }
+}
 
 static bool ui_lock(TickType_t timeout)
 {
@@ -87,14 +151,27 @@ static int64_t s_result_start_us = 0;      // 结果展示起始时间 (us)
 /**
  * @brief 绘制主页
  */
-static void draw_home_page(void)
+static void draw_home_page(const ds3231_time_t *prefetched_time, bool prefetched_valid)
 {
     char date_buf[8];
     char temp_buf[12];
     char time_buf[8];
     health_status_t status = health_get_status();
     ds3231_time_t rtc_time = {0};
-    bool rtc_ok = (ds3231_get_time(&rtc_time) == ESP_OK);
+    bool rtc_ok = false;
+
+    if (prefetched_valid && prefetched_time != NULL) {
+        rtc_time = *prefetched_time;
+        rtc_ok = true;
+    } else {
+        rtc_ok = (ds3231_get_time(&rtc_time) == ESP_OK);
+    }
+
+    if (!rtc_ok && s_home_cached_time_valid) {
+        rtc_time = s_home_cached_time;
+        rtc_ok = true;
+        ESP_LOGD(TAG, "RTC read failed, use cached time");
+    }
 
     sh1106_clear();
 
@@ -111,6 +188,8 @@ static void draw_home_page(void)
 
         snprintf(time_buf, sizeof(time_buf), "%02u:%02u", rtc_time.hour, rtc_time.minute);
         s_home_last_minute = rtc_time.minute;
+        s_home_cached_time = rtc_time;
+        s_home_cached_time_valid = true;
     } else {
         sh1106_draw_string(0, 0, "--/-- RTC", 1);
         snprintf(time_buf, sizeof(time_buf), "00:00");
@@ -241,7 +320,7 @@ static void ui_update_locked(void)
 {
     switch (s_current_page) {
         case UI_PAGE_HOME:
-            draw_home_page();
+            draw_home_page(NULL, false);
             break;
         case UI_PAGE_HEART_RATE:
             draw_heart_rate_page();
@@ -307,7 +386,14 @@ static void ui_task(void *arg)
     const uint32_t full_refresh_cycles = UI_REFRESH_INTERVAL_MS / UI_FAST_REFRESH_INTERVAL_MS;
 
     /* HOME 页 RTC 检查计数器: 每 20 次 (10秒) 读一次 DS3231 */
-    uint8_t rtc_check_counter = 0;
+    uint8_t rtc_sync_counter = 0;
+    uint8_t local_tick_counter = 0;
+
+    /* HOME 页温度刷新计数器: 30000ms / 500ms = 60 次
+     * 初始值设为 56，使启动约 2 秒后首次刷新温度显示，
+     * 确保 sensor_service 启动 1 秒后采样 + 750ms 转换时间已完成 */
+    const uint8_t temp_refresh_cycles = 60;
+    uint8_t temp_refresh_counter = 56;
 
     while (1) {
         uint32_t notify_value = 0;
@@ -333,13 +419,46 @@ static void ui_task(void *arg)
         ui_page_t page = s_current_page;
 
         if (page == UI_PAGE_HOME) {
+            /* 每 60 次循环 (30秒) 刷新一次温度显示 */
+            if (++temp_refresh_counter >= temp_refresh_cycles) {
+                temp_refresh_counter = 0;
+                draw_home_page(s_home_cached_time_valid ? &s_home_cached_time : NULL,
+                               s_home_cached_time_valid);
+            }
+
             /* 每 20 次循环 (10秒) 才读一次 RTC，避免高频 I2C 竞争 */
-            if (++rtc_check_counter >= 20) {
-                rtc_check_counter = 0;
-                ds3231_time_t rtc_time = {0};
-                if (ds3231_get_time(&rtc_time) == ESP_OK) {
+            bool rtc_sampled = false;
+            bool rtc_ok = false;
+            ds3231_time_t rtc_time = {0};
+
+            if (++rtc_sync_counter >= UI_HOME_RTC_SYNC_CYCLES) {
+                rtc_sync_counter = 0;
+                rtc_ok = (ds3231_get_time(&rtc_time) == ESP_OK);
+                rtc_sampled = true;
+
+                if (rtc_ok) {
+                    s_home_cached_time = rtc_time;
+                    s_home_cached_time_valid = true;
                     if (s_home_last_minute != (int)rtc_time.minute) {
-                        draw_home_page();
+                        draw_home_page(&rtc_time, true);
+                    }
+                }
+            }
+
+            if (++local_tick_counter >= UI_HOME_LOCAL_TICK_CYCLES) {
+                local_tick_counter = 0;
+
+                if (!s_home_cached_time_valid) {
+                    if (!rtc_sampled) {
+                        rtc_ok = (ds3231_get_time(&rtc_time) == ESP_OK);
+                    }
+                    if (rtc_ok) {
+                        draw_home_page(&rtc_time, true);
+                    }
+                } else {
+                    home_time_add_one_second(&s_home_cached_time);
+                    if (s_home_last_minute != (int)s_home_cached_time.minute) {
+                        draw_home_page(&s_home_cached_time, true);
                     }
                 }
             }
@@ -380,6 +499,12 @@ static void ui_task(void *arg)
             }
         }
 
+        if (page != UI_PAGE_HOME) {
+            rtc_sync_counter = 0;
+            local_tick_counter = 0;
+            temp_refresh_counter = 0;
+        }
+
         ui_unlock();
     }
 }
@@ -393,6 +518,7 @@ esp_err_t ui_manager_init(void)
     s_current_page = UI_PAGE_HOME;
     s_manual_measuring = false;
     s_home_last_minute = -1;
+    s_home_cached_time_valid = false;
 
     s_ui_mutex = xSemaphoreCreateMutex();
     if (s_ui_mutex == NULL) {

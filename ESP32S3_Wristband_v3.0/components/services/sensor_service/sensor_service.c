@@ -369,9 +369,9 @@ esp_err_t sensor_service_start(void)
     }
 
     s_ctx.running = true;
-    // 初始化为当前时间减去采样间隔，确保立即触发第一次温度采样
+    // 启动后延迟1秒再触发第一次温度采样
     uint32_t now = get_timestamp_ms();
-    s_ctx.temp_last_sample = now - SENSOR_TEMP_NORMAL_INTERVAL;
+    s_ctx.temp_last_sample = now - SENSOR_TEMP_NORMAL_INTERVAL + 1000;
     // 立即触发第一次心率测量
     s_ctx.hr_last_auto_trigger = now - SENSOR_HR_AUTO_INTERVAL_MS;
 

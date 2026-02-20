@@ -603,9 +603,9 @@ static uint8_t calculate_heart_rate(void)
         return 0;
     }
 
-    // 剔除偏离中值 ±30% 的离群值
-    uint32_t low_bound  = median * 70 / 100;
-    uint32_t high_bound = median * 130 / 100;
+    // 剔除偏离中值 ±40% 的离群值
+    uint32_t low_bound  = median * 60 / 100;
+    uint32_t high_bound = median * 140 / 100;
 
     uint32_t sum = 0;
     uint8_t valid = 0;
