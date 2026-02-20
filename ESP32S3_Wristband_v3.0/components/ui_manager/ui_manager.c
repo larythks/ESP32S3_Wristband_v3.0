@@ -424,6 +424,10 @@ static void ui_task(void *arg)
                 temp_refresh_counter = 0;
                 draw_home_page(s_home_cached_time_valid ? &s_home_cached_time : NULL,
                                s_home_cached_time_valid);
+                /* 温度尚无效时，缩短重试间隔（3秒后重试而非30秒） */
+                if (health_get_status().temp_validity != MEASURE_VALID) {
+                    temp_refresh_counter = temp_refresh_cycles - 6;
+                }
             }
 
             /* 每 20 次循环 (10秒) 才读一次 RTC，避免高频 I2C 竞争 */

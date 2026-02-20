@@ -162,6 +162,9 @@ esp_err_t health_monitor_init(void)
     }
 
     memset(&s_ctx, 0, sizeof(s_ctx));
+    // memset 后 temp_validity == MEASURE_VALID(0)，会导致 UI 误判温度有效并显示 0°C
+    // 显式设为无信号状态，使 UI 在首次真实数据到达前显示 "--.-C"
+    s_ctx.status.temp_validity = MEASURE_INVALID_NO_SIGNAL;
     s_ctx.temp.last_valid_temp = 25.0f;  // 默认环境温度
 
     ESP_LOGI(TAG, "Health monitor initialized");
