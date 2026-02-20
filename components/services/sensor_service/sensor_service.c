@@ -29,6 +29,22 @@ static const char *TAG = "sensor_svc";
 // 事件发布间隔 (ms)
 #define EVENT_PUBLISH_INTERVAL  100
 
+// PPG 环形缓冲区大小（必须是 2 的幂）
+#define PPG_RING_SIZE           64
+#define PPG_RING_MASK           (PPG_RING_SIZE - 1)
+
+/**
+ * @brief PPG 环形缓冲区（保存 FIFO 读出的所有样本）
+ */
+typedef struct {
+    uint32_t red[PPG_RING_SIZE];
+    uint32_t ir[PPG_RING_SIZE];
+    uint16_t head;      // 写入位置
+    uint16_t tail;      // 读取位置
+} ppg_ring_t;
+
+static ppg_ring_t s_ppg_ring = {0};
+
 /**
  * @brief DS18B20 异步采样状态
  */
@@ -165,7 +181,18 @@ static bool sample_hr_spo2(void)
 
     if (ret == ESP_OK && count > 0) {
         xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
-        // 存储最新的 PPG 原始数据（取最后一个样本）
+        // 将所有 FIFO 样本写入环形缓冲区
+        for (uint8_t i = 0; i < count; i++) {
+            uint16_t next = (s_ppg_ring.head + 1) & PPG_RING_MASK;
+            if (next == s_ppg_ring.tail) {
+                // 缓冲区满，丢弃最老的样本
+                s_ppg_ring.tail = (s_ppg_ring.tail + 1) & PPG_RING_MASK;
+            }
+            s_ppg_ring.red[s_ppg_ring.head] = red[i];
+            s_ppg_ring.ir[s_ppg_ring.head] = ir[i];
+            s_ppg_ring.head = next;
+        }
+        // 同时保留 latest_data 兼容性（取最后一个样本）
         s_ctx.latest_data.ppg_red = red[count - 1];
         s_ctx.latest_data.ppg_ir = ir[count - 1];
         s_ctx.latest_data.ppg_fresh = true;
@@ -231,6 +258,8 @@ static void sensor_task(void *arg)
                 if ((now - s_ctx.hr_last_auto_trigger) >= hr_interval) {
                     ESP_LOGI(TAG, "Auto trigger HR measure window");
                     max30102_wakeup();
+                    // 清空 PPG 环形缓冲区，避免混入旧数据
+                    s_ppg_ring.head = s_ppg_ring.tail = 0;
                     s_ctx.hr_measure_state = HR_MEASURE_MEASURING;
                     s_ctx.hr_measure_start_time = now;
                     s_ctx.hr_last_auto_trigger = now;
@@ -453,6 +482,10 @@ esp_err_t sensor_start_hr_measure(void)
 
     ESP_LOGI(TAG, "Manual trigger HR measure window");
     max30102_wakeup();
+    // 清空 PPG 环形缓冲区
+    xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+    s_ppg_ring.head = s_ppg_ring.tail = 0;
+    xSemaphoreGive(s_ctx.mutex);
     s_ctx.hr_measure_state = HR_MEASURE_MEASURING;
     s_ctx.hr_measure_start_time = get_timestamp_ms();
     s_ctx.hr_last_auto_trigger = s_ctx.hr_measure_start_time;
@@ -465,4 +498,28 @@ esp_err_t sensor_start_hr_measure(void)
 hr_measure_state_t sensor_get_hr_measure_state(void)
 {
     return s_ctx.hr_measure_state;
+}
+
+/**
+ * @brief 取出环形缓冲区中所有已缓存的 PPG 样本
+ */
+esp_err_t sensor_drain_ppg(ppg_batch_t *out)
+{
+    if (out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+
+    uint8_t n = 0;
+    while (s_ppg_ring.tail != s_ppg_ring.head && n < PPG_BATCH_MAX) {
+        out->red[n] = s_ppg_ring.red[s_ppg_ring.tail];
+        out->ir[n]  = s_ppg_ring.ir[s_ppg_ring.tail];
+        s_ppg_ring.tail = (s_ppg_ring.tail + 1) & PPG_RING_MASK;
+        n++;
+    }
+    out->count = n;
+
+    xSemaphoreGive(s_ctx.mutex);
+    return ESP_OK;
 }
