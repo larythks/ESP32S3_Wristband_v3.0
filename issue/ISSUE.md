@@ -1007,3 +1007,282 @@ for (int i = 0; i < raw_samples && samples < num_samples; i += 2) {
 - `components/services/alarm_manager/alarm_manager.c`
 
 ---
+
+## ISSUE-038：心率测量不准且波动大 — PPG 数据管道丢失 + 无信号滤波 + 固定阈值 + 无运动抑制
+
+**发现日期**：2026-02-20
+
+**原因**：
+心率测量链路存在 4 个层面的问题：
+
+1. **PPG 数据大量丢失**（P0）：`sensor_service.c:sample_hr_spo2()` 每次从 MAX30102 FIFO 读出多个样本，但只保留最后一个（`s_ctx.latest_data.ppg_red = red[count - 1]`），导致 60-70% 的原始 PPG 数据被丢弃。
+
+2. **无信号预处理**（P0）：`health_monitor.c:detect_peak()` 直接对原始 PPG 信号做峰值检测，包含直流基线漂移和高频噪声，心率信号频段 0.5-4Hz 未被隔离。
+
+3. **固定峰值检测阈值**（P1）：`PEAK_DETECTION_THRESHOLD = 50` 硬编码，PPG 信号幅度因人因佩戴差异极大，固定阈值不适用。
+
+4. **IMU 数据未用于运动伪影抑制**（P1）：sensor_service 持续采集 50Hz IMU 数据，但 health_monitor 完全未使用，运动伪影被当作心率峰值处理。
+
+**后果**：
+- 心率测量结果不准确，与真实心率偏差大
+- 心率值在相邻测量窗口间波动剧烈
+- 运动状态下心率完全不可信
+
+**解决方案**：
+
+1. **修复 PPG 数据管道**：在 `sensor_service.c` 新增 64 样本 PPG 环形缓冲区 + `sensor_drain_ppg()` API。
+2. **添加级联 IIR 带通滤波器**：高通 0.5Hz + 低通 4Hz。
+3. **自适应峰值检测**：基于最近 2 秒信号峰峰值 × 0.3 动态阈值 + 中值离群值剔除。
+4. **运动伪影抑制**：利用 IMU 加速度检测运动，超阈值时跳过峰值检测。
+5. **AC/DC 改为 RMS 计算**：替代全局 min/max，对异常值更鲁棒。
+
+**涉及文件**：
+- `components/services/sensor_service/include/sensor_service.h`
+- `components/services/sensor_service/sensor_service.c`
+- `components/services/health_monitor/health_monitor.c`
+
+---
+
+## ISSUE-039：血氧测量波动大 — AC/DC 计算使用未滤波的原始信号且包含运动样本
+
+**发现日期**：2026-02-20
+
+**原因**：
+ISSUE-038 修复了心率检测的信号处理链路，但 SpO2 的 AC/DC 分量计算仍存在两个关键问题：
+
+1. **AC 计算使用未滤波的原始信号**：带通滤波器仅应用于 IR 通道用于峰值检测，AC/DC 计算 (`calculate_ac_dc()`) 仍然遍历 400 元素原始缓冲区计算 RMS，原始信号包含直流漂移和高频噪声，导致 AC 分量不稳定。
+
+2. **RED 通道完全未滤波**：SpO2 = f(AC_red/DC_red, AC_ir/DC_ir)，但 RED 通道没有经过任何滤波处理，其 AC 值受噪声影响更严重。
+
+3. **运动样本污染 AC/DC**：运动样本虽然在峰值检测时被跳过，但仍被存入原始缓冲区参与 AC/DC 计算，运动引起的信号波动被计入 AC 分量。
+
+**后果**：
+- SpO2 值在 80%-99% 之间大幅波动
+- 正常佩戴时偶尔出现 SpO2 < 80% 的虚假低氧读数
+- 轻微运动即可导致 SpO2 读数异常
+
+**解决方案**：
+
+1. **RED 通道添加 IIR 带通滤波**：与 IR 通道相同的高通 0.5Hz + 低通 4Hz 级联滤波。
+2. **增量式 AC/DC 累加**：在 `process_ppg_data()` 中逐样本累加滤波后信号的平方和（AC）和原始值（DC），运动样本不参与累加。使用 `double` 精度避免平方和溢出。
+3. **移除 400 元素原始缓冲区**：`calculate_ac_dc()` 直接使用累加值计算，不再遍历缓冲区，节省 3200 字节 RAM。
+
+**涉及文件**：
+- `components/services/health_monitor/health_monitor.c`
+
+
+---
+
+## ISSUE-040：血氧计算持续偏低（< 90%）— 线性公式不准确 + 整数截断 + 无信号校验 + 滤波器瞬态偏差
+
+**发现日期**：2026-02-20
+
+**原因**：
+SpO2 计算结果持续低于 90%，存在四个叠加问题：
+
+1. **线性经验公式不准确**：使用 `SpO2 = 110 - 25 * R`，该公式在 R=0.5~0.8 的正常范围内系统性偏低 3~5 个百分点。Maxim MAX30102 官方参考使用二次多项式 `SpO2 = -45.060*R² + 30.354*R + 94.845`。
+
+2. **AC 分量整数截断丢失精度**：`red_ac` 和 `ir_ac` 从浮点 RMS 值截断为 `uint32_t`，对于手腕弱信号场景，小数部分丢失导致 R 值产生显著偏差。
+
+3. **缺少信号幅度校验**：`PPG_MIN_AMPLITUDE` 阈值已定义但从未使用。手腕测量信号弱时，噪声主导 AC 分量，使 RED 和 IR 的 AC/DC 比值趋于相同，R → 1.0，SpO2 → 85%。
+
+4. **IIR 滤波器建立期样本参与 AC/DC 累加**：滤波器初始化后前 ~1 秒的输出处于瞬态响应，幅度不稳定，这些样本参与了 RMS 计算导致轻微偏差。
+
+**后果**：
+- SpO2 读数持续低于 90%，即使佩戴者血氧正常
+- 频繁触发血氧低报警（假阳性）
+- 报警系统反复进入实时模式，影响正常使用
+
+**解决方案**：
+
+1. **AC/DC 改用 float 存储**：`red_ac`、`red_dc`、`ir_ac`、`ir_dc` 从 `uint32_t` 改为 `float`，消除整数截断误差。
+2. **替换为 Maxim 二次多项式校准公式**：`SpO2 = -45.060*R² + 30.354*R + 94.845`，在 R=0.5~0.8 范围比线性公式高 3~5%。
+3. **添加信号幅度校验**：当 `ir_ac` 或 `red_ac` 低于 `PPG_MIN_AMPLITUDE`（100）时返回无效，避免噪声主导的虚假读数。
+4. **跳过滤波器建立期**：前 25 个样本（1 秒 @25Hz）不参与 AC/DC 累加，等待 IIR 滤波器输出稳定。
+5. **SpO2 结果四舍五入**：从 `(uint8_t)spo2` 改为 `(uint8_t)(spo2 + 0.5f)`，消除系统性向下取整偏差。
+6. **增加诊断日志**：输出实际 R 值、AC/DC 分量值，便于后续调优。
+
+**涉及文件**：
+- `components/services/health_monitor/health_monitor.c`
+
+
+---
+
+## ISSUE-041：ds3231_get_time 偶发返回失败导致 OLED 无法显示时间
+
+**发现日期**：2026-02-20
+
+**原因**：
+`ds3231_get_time()` 内部仅执行一次 `i2c_bus_read()`，无重试机制。在 I2C 总线繁忙（`sensor_task` 高频读取 MPU6050/MAX30102）或出现瞬态噪声时，单次读取可能因 mutex 超时或硬件 NAK 而失败，函数直接返回错误。
+
+**后果**：
+- Home 页面偶发无法获取 RTC 时间，显示不更新
+- 语音"查询时间"命令可能播报错误时间（零值）
+
+**解决方案**：
+在 `ds3231_get_time()` 中对 `i2c_bus_read()` 添加重试逻辑，最多尝试 3 次，每次间隔 5ms。3 次均失败后才返回错误并输出警告日志。
+
+**涉及文件**：
+- `components/drivers/ds3231/ds3231.c`
+
+---
+
+## ISSUE-042：step_refresh_timer 每 500ms 读取 DS3231 导致持续 I2C 失败日志
+
+**发现日期**：2026-02-20
+
+**原因**：
+`ui_manager.c` 的 `step_refresh_timer_callback()` 在 Home 页面时，每 500ms 调用一次 `ds3231_get_time()` 来检查分钟是否变化。但时间最快每 60 秒才变化一次，500ms 的 RTC 读取频率完全没有必要。高频 I2C 读取与 `sensor_task`（优先级 6，每 20ms 读取 MPU6050/MAX30102）产生严重总线竞争，导致 DS3231 的 3 次重试（ISSUE-041 添加）全部失败，持续输出 `"I2C read failed after 3 attempts: ESP_FAIL"` 警告日志。
+
+**后果**：
+- 串口日志每 500ms 输出一次 DS3231 读取失败警告，刷屏严重
+- 不必要的 I2C 总线竞争消耗系统资源
+- 实际时间显示不受影响（偶尔成功的读取足以更新分钟显示），但日志噪声掩盖了真正的问题
+
+**解决方案**：
+在 `step_refresh_timer_callback()` 中添加静态计数器 `s_rtc_check_counter`，每 20 次回调（10 秒）才读取一次 DS3231，其余回调跳过 RTC 读取。10 秒间隔足以保证分钟变化时及时刷新（最大延迟 10 秒），同时将 I2C 竞争降低 20 倍。
+
+```c
+if (page == UI_PAGE_HOME) {
+    static uint8_t s_rtc_check_counter = 0;
+    if (++s_rtc_check_counter >= 20) {
+        s_rtc_check_counter = 0;
+        ds3231_time_t rtc_time = {0};
+        if (ds3231_get_time(&rtc_time) == ESP_OK) {
+            if (s_home_last_minute != (int)rtc_time.minute) {
+                draw_home_page();
+            }
+        }
+    }
+}
+```
+
+**涉及文件**：
+- `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-043：UI 定时器回调阻塞 Timer Service 任务（I2C 读取 + OLED 全屏刷新）
+
+**发现日期**：2026-02-20
+
+**原因**：
+`ui_manager.c` 中原有两个 FreeRTOS 软件定时器回调（`refresh_timer_callback` 2 分钟周期、`step_refresh_timer_callback` 500ms 周期）运行在 Timer Service 任务上下文中。两个回调均执行重量级操作：
+1. I2C 读取 DS3231 RTC（`ds3231_get_time` → `i2c_bus_read`，含 3 次重试）
+2. OLED 全屏绘制（`sh1106_clear` + 多次 `sh1106_draw_string` + `sh1106_update` 8 页 I2C 写入）
+3. 手动测量状态机管理（倒计时/等待/结果三阶段）
+
+Timer Service 任务是所有软件定时器共享的，回调执行期间会阻塞其他定时器（按键消抖、WS2812 闪烁等）。OLED 全屏刷新耗时约 10-30ms，加上 I2C 操作，单次回调可能占用 Timer Service 40ms 以上。
+
+此外，`step_refresh_timer_callback` 的名称和注释（"仅刷新步数区域"）与实际职责不符——该回调实际承担 HOME 页 RTC 检查、STEPS 页步数刷新、MANUAL_MEASURE 页状态机管理三项工作。
+
+**后果**：
+- Timer Service 被 UI 操作阻塞，其他软件定时器响应延迟
+- 按键消抖定时器可能因 Timer Service 繁忙而出现抖动
+- 代码命名与实际功能不一致，增加维护难度
+
+**解决方案**：
+1. 删除两个 FreeRTOS 软件定时器（`s_refresh_timer` 和 `s_step_refresh_timer`）
+2. 创建独立 `ui_task` 任务（栈 4096，优先级 2），完全接管所有 UI 定时刷新职责
+3. 任务主循环使用 `xTaskNotifyWait` 等待 500ms 超时作为快速刷新周期
+4. 内部计数器追踪 2 分钟全量刷新间隔（240 次 × 500ms = 120s）
+5. HOME 页 RTC 检查计数器改为任务局部变量（非 static）
+6. 宏 `UI_STEP_REFRESH_INTERVAL_MS` → `UI_FAST_REFRESH_INTERVAL_MS`
+7. 更新所有注释和日志，反映实际多职责
+
+**涉及文件**：
+- `components/ui_manager/include/ui_manager.h`
+- `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-045：主页温度显示更新滞后 — 最长 2 分钟才刷新
+
+**发现日期**：2026-02-20
+
+**原因**：
+DS18B20 温度传感器每 30 秒采样一次（`SENSOR_TEMP_NORMAL_INTERVAL = 30000`），但 UI 主页仅在以下时机重绘：
+1. 2 分钟全量刷新（`UI_REFRESH_INTERVAL_MS = 120000`）
+2. RTC 分钟变化时（最长 60 秒）
+
+两个刷新路径均不以温度更新为触发条件，导致新温度数据到达后最长需要等待 2 分钟才在屏幕上显示。
+
+此外，系统启动时温度采样立即触发（`temp_last_sample = now - 30000`），但 DS18B20 需要 750ms 转换时间，而 UI 首次绘制在 `ui_manager_init()` 中同步执行，此时温度数据尚未就绪，导致启动后显示 `--.-C` 直到首次刷新。
+
+**后果**：
+- 用户在主页看到的温度值可能滞后 30 秒至 2 分钟
+- 系统启动后温度显示为 `--.-C`，需等待较长时间才出现实际值
+
+**解决方案**：
+
+1. **UI 侧（`ui_manager.c`）**：在 `ui_task()` 中新增 30 秒温度刷新计数器（`temp_refresh_counter`，60 次 × 500ms = 30 秒），每 30 秒触发一次 HOME 页重绘。初始值设为 57，使启动约 1.5 秒后首次刷新，配合传感器 1 秒延迟 + 750ms 转换时间。
+
+2. **传感器侧（`sensor_service.c`）**：将首次温度采样从立即触发改为延迟 1 秒（`temp_last_sample = now - 30000 + 1000`），确保系统各模块初始化完成后再开始 I2C 通信。
+
+**涉及文件**：
+- `components/services/sensor_service/sensor_service.c`
+- `components/ui_manager/ui_manager.c`
+
+**发现日期**：2026-02-20
+
+**原因**：  
+在 ISSUE-042 中，为降低 I2C 竞争，Home 页面改为每 10 秒读取一次 DS3231（`20 * 500ms`）。该策略虽然显著降低了 I2C 压力，但 UI 的时间更新完全依赖这次周期读取，导致显示分钟变化时可能滞后。  
+同时，页面显示格式为 `HH:MM`（不显示秒），用户对“整分钟跳变时机”更敏感，延迟体感明显。
+
+**后果**：
+- Home 页面时间显示与真实时间存在 0~10 秒可见延迟（UI 延迟，不是 RTC 走时误差）
+- 分钟跳变可能晚于真实时间，用户观感为“时间不准”
+- 为追求更实时显示如果直接恢复高频 RTC 读取，会重新放大 I2C 竞争风险
+
+**解决方案**：  
+采用“低频硬件同步 + 高频本地推进”的混合策略：
+1. 保留 DS3231 低频读取：每 10 秒读取一次，仅用于校准本地时间缓存（降低 I2C 占用）
+2. 新增本地时间推进：每 1 秒在内存中将缓存时间 `+1s`（包含进位、跨日、闰年处理）
+3. Home 页面分钟变化检测优先使用本地缓存时间，确保分钟跳变最大延迟 <= 1 秒
+4. 当 RTC 读取失败时继续使用缓存时间，避免界面退化为 `--/-- RTC`
+5. 离开 Home 页面时重置本地计数器，避免跨页面累计误差
+
+**涉及文件**：
+- `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-046：启动后 30 秒内温度显示 0°C — MEASURE_VALID 枚举零值 + UI 刷新间隔过长
+
+**发现日期**：2026-02-20
+
+**原因**：
+两个问题叠加导致启动后 30 秒内温度持续显示 0：
+
+1. **`MEASURE_VALID = 0` 与 memset 冲突**：`health_monitor.c:health_monitor_init()` 中 `memset(&s_ctx, 0, sizeof(s_ctx))` 将整个上下文清零，包括 `s_ctx.status.temperature = 0.0f` 和 `s_ctx.status.temp_validity = 0`。由于 `MEASURE_VALID` 的枚举值恰好是 0，清零后 UI 侧 `health_get_status()` 返回的 `temp_validity == MEASURE_VALID`，判定温度有效，显示 `0.0C` 而非预期的 `--.-C`。
+
+2. **UI 温度刷新间隔 30 秒无条件等待**：`ui_manager.c` 中 `temp_refresh_counter` 初始值 56，首次触发在 ~2 秒（计数到 60），但此次可能仍在传感器数据到达前。首次触发后计数器重置为 0，下一次刷新需要再等 30 秒（60 × 500ms），期间即使真实温度已可用也不会更新显示。
+
+**后果**：
+- 系统启动后 OLED 主页温度区域显示 `0.0C` 长达 30 秒
+- 实际 DS18B20 在启动约 2 秒后已采集到有效温度数据，但 UI 未及时刷新
+
+**解决方案**：
+
+1. **`health_monitor.c`**：`memset` 后显式设置 `s_ctx.status.temp_validity = MEASURE_INVALID_NO_SIGNAL`，使启动时 UI 显示 `--.-C` 而非误导性的 `0.0C`。
+
+2. **`ui_manager.c`**：在温度刷新路径中，`draw_home_page()` 执行后检查温度有效性。若 `temp_validity != MEASURE_VALID`，将 `temp_refresh_counter` 设为 `temp_refresh_cycles - 6`（3 秒后重试），而非等待完整的 30 秒周期。确保真实温度数据一到达就能在数秒内显示。
+
+```c
+// health_monitor.c
+memset(&s_ctx, 0, sizeof(s_ctx));
+s_ctx.status.temp_validity = MEASURE_INVALID_NO_SIGNAL;
+
+// ui_manager.c
+if (++temp_refresh_counter >= temp_refresh_cycles) {
+    temp_refresh_counter = 0;
+    draw_home_page(...);
+    if (health_get_status().temp_validity != MEASURE_VALID) {
+        temp_refresh_counter = temp_refresh_cycles - 6;  // 3秒后重试
+    }
+}
+```
+
+**涉及文件**：
+- `components/services/health_monitor/health_monitor.c`
+- `components/ui_manager/ui_manager.c`

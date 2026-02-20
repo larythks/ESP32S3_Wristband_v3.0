@@ -27,6 +27,18 @@ extern "C" {
 // 实时采样间隔 (ms)
 #define SENSOR_REALTIME_INTERVAL        1000    // 实时模式: 1秒
 
+// PPG 批量数据配置
+#define PPG_BATCH_MAX           16      // 单次取出最大样本数
+
+/**
+ * @brief PPG 批量数据结构（用于 sensor_drain_ppg）
+ */
+typedef struct {
+    uint32_t red[PPG_BATCH_MAX];    // RED 通道原始值
+    uint32_t ir[PPG_BATCH_MAX];     // IR 通道原始值
+    uint8_t  count;                 // 实际样本数
+} ppg_batch_t;
+
 // 环境温度异常阈值 (摄氏度)
 #define SENSOR_TEMP_HIGH_ALERT_THRESHOLD    34.8f   // 高温异常阈值
 #define SENSOR_TEMP_HIGH_NORMAL_THRESHOLD   34.5f   // 高温恢复阈值
@@ -95,6 +107,13 @@ esp_err_t sensor_start_hr_measure(void);
  * @return 当前测量状态
  */
 hr_measure_state_t sensor_get_hr_measure_state(void);
+
+/**
+ * @brief 取出所有已缓存的 PPG 样本（调用后缓冲区清空）
+ * @param out 输出批量数据
+ * @return ESP_OK 成功
+ */
+esp_err_t sensor_drain_ppg(ppg_batch_t *out);
 
 #ifdef __cplusplus
 }

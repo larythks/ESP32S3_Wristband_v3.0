@@ -6,6 +6,8 @@
 #include "ds3231.h"
 #include "i2c_bus.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdbool.h>
 
 static const char *TAG = "ds3231";
@@ -76,8 +78,16 @@ esp_err_t ds3231_get_time(ds3231_time_t *time)
     }
 
     uint8_t raw[7] = {0};
-    esp_err_t ret = i2c_bus_read(DS3231_I2C_ADDR, DS3231_REG_SECONDS, raw, sizeof(raw));
+    esp_err_t ret = ESP_FAIL;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        ret = i2c_bus_read(DS3231_I2C_ADDR, DS3231_REG_SECONDS, raw, sizeof(raw));
+        if (ret == ESP_OK) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
     if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "I2C read failed after 3 attempts: %s", esp_err_to_name(ret));
         return ret;
     }
 
