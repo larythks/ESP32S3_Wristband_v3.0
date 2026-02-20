@@ -17,7 +17,7 @@ extern "C" {
 
 // UI 刷新间隔 (ms)
 #define UI_REFRESH_INTERVAL_MS       120000  // 2 分钟（心率/血氧/体温）
-#define UI_STEP_REFRESH_INTERVAL_MS  500     // 500ms（步数）
+#define UI_FAST_REFRESH_INTERVAL_MS  500     // 500ms（快速刷新周期）
 #define UI_MANUAL_RESULT_DISPLAY_MS  5000    // 手动测量结果展示 5 秒
 
 /**

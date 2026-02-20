@@ -1,10 +1,13 @@
+# ========================
+# 项目级忽略规则
+# ========================
+
 # macOS
 .DS_Store
-.AppleDouble
-.LSOverride
 
-# Directory metadata
-.directory
+# Windows
+Thumbs.db
+Desktop.ini
 
 # Temporary files
 *~
@@ -12,74 +15,23 @@
 *.swo
 *.bak
 *.tmp
-
-# Log files
 *.log
 
-# Build artifacts and directories
-**/build/
-build/
-*.o
-*.a
-*.out
-*.exe # For any host-side utilities compiled on Windows
-
-# ESP-IDF specific build outputs
-*.bin
-*.elf
-*.map
-flasher_args.json # Generated in build directory
-sdkconfig.old
-sdkconfig
-
-# ESP-IDF dependencies
-# For older versions or manual component management
-/components/.idf/
-**/components/.idf/
-# For modern ESP-IDF component manager
-managed_components/
-# If ESP-IDF tools are installed/referenced locally to the project
-.espressif/
-
-# CMake generated files
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-install_manifest.txt
-CTestTestfile.cmake
-
-# Python environment files
-*.pyc
-*.pyo
-*.pyd
-__pycache__/
-*.egg-info/
-dist/
-
-# Virtual environment folders
-venv/
-.venv/
-env/
-
-# Language Servers
-.clangd/
-.ccls-cache/
-compile_commands.json
-
-# Windows specific
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# User-specific configuration files
+# IDE
+.vscode/
+.idea/
 *.user
-*.workspace # General workspace files, can be from various tools
-*.suo       # Visual Studio Solution User Options
-*.sln.docstates # Visual Studio
+*.suo
 
-# If using Visual Studio Code, ignore workspace settings and extensions
-.vscode/ 
-# If using Claude for code generation, ignore its cache and settings
-.claude/ 
+# Claude Code
+.claude/
 
-nul
+# ========================
+# 排除的目录
+# ========================
+
+# 旧版备份（不纳入版本控制）
+ESP32_S3_Wristband-backup/
+ESP32S3_Wristband/
+
+# mobile_flutter 空目录占位（Flutter 项目创建后会有自己的 .gitignore）
