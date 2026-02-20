@@ -21,7 +21,7 @@
 | Week 3 | 迭代 3.2: I2S 音频播放 | ✅ 已完成 | 2026-02-18 |
 | Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | ✅ 已完成 | 2026-02-18 |
 | Week 3 | 迭代 3.4: 完整报警流程联调 | ✅ 已完成 | 2026-02-19 |
-| Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | 🔲 待开始 | - |
+| Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | ✅ 已完成 | 2026-02-20 |
 | Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | 🔲 待开始 | - |
 | Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | 🔲 待开始 | - |
 | Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | 🔲 待开始 | - |
@@ -327,3 +327,29 @@
   - 宏 UI_STEP_REFRESH_INTERVAL_MS → UI_FAST_REFRESH_INTERVAL_MS
 - **关键文件**: components/ui_manager/include/ui_manager.h, components/ui_manager/ui_manager.c
 - **附带修复**: ISSUE-043
+
+---
+
+### 2026-02-20 - 迭代 4.1: Flutter 项目搭建 + BLE 连接
+
+- **迭代**: Week 4 - 迭代 4.1
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 项目基础配置: pubspec.yaml 添加 flutter_blue_plus/provider/permission_handler/intl 依赖
+  - Android 配置: minSdk=23, applicationId=com.careband.app, BLE/定位权限声明
+  - 数据模型: BleConnectionState 枚举, AlarmType 枚举(0~9), TelemetryData/AlarmData/DeviceStatus 数据类
+  - BLE 通信层: 单例 BleManager (扫描/连接/GATT发现/Notify订阅/命令发送), BleParser (二进制解析 Telemetry 20B/Alarm 16B/Status 3B), BleCommand (ACK 9B/SYNC_TIME 9B/REQUEST_REPORT 5B/MANUAL_MEASURE 7B + nonce 递增)
+  - 状态管理: BleProvider (ChangeNotifier) 封装 BleManager streams, 暴露 startScan/connectDevice/disconnect/ackAlarm/syncTime 等方法
+  - UI 页面: ScanPage (权限检查+CareBand 过滤+自动跳转), DevicePage (卡片式 Telemetry 显示+断连自动返回+Alarm SnackBar), DeviceTile (设备名/MAC/RSSI 信号图标)
+  - 单元测试: 63 个测试全部通过 (ble_parser_test 18 个, ble_command_test 20 个, models_test 24 个, widget_test 1 个)
+  - data_valid bitmap 与固件对齐: HR 和 SpO2 共用 bit 1 (0x02), 非独立 bit
+- **关键文件**:
+  - 修改: `mobile_flutter/pubspec.yaml`, `mobile_flutter/android/app/build.gradle.kts`, `mobile_flutter/android/app/src/main/AndroidManifest.xml`
+  - 新建: `mobile_flutter/lib/data/models.dart`, `mobile_flutter/lib/data/ble_provider.dart`, `mobile_flutter/lib/ble/ble_manager.dart`, `mobile_flutter/lib/ble/ble_parser.dart`, `mobile_flutter/lib/ble/ble_command.dart`, `mobile_flutter/lib/ui/scan_page.dart`, `mobile_flutter/lib/ui/device_page.dart`, `mobile_flutter/lib/ui/widgets/device_tile.dart`
+  - 重写: `mobile_flutter/lib/main.dart`
+  - 测试: `mobile_flutter/test/ble_parser_test.dart`, `mobile_flutter/test/ble_command_test.dart`, `mobile_flutter/test/models_test.dart`, `mobile_flutter/test/widget_test.dart`
+- **验收状态**: ✅ 已验收
+  - `flutter pub get` ✅ 无错误
+  - `flutter analyze` ✅ No issues found
+  - `flutter test` ✅ 63 tests passed
+- **附带修复**: ISSUE-flutter-001 (widget_test.dart 引用旧 MyApp 类)
