@@ -19,6 +19,18 @@ class BleProvider extends ChangeNotifier {
   String? _errorMessage;
   String? _connectedDeviceName;
 
+  // --- 历史记录（内存中） ---
+  final List<TelemetryData> _telemetryHistory = [];
+  final List<AlarmData> _alarmHistory = [];
+
+  static const int maxTelemetryHistory = 30;
+  static const int maxAlarmHistory = 50;
+
+  List<TelemetryData> get telemetryHistory =>
+      List.unmodifiable(_telemetryHistory);
+  List<AlarmData> get alarmHistory =>
+      List.unmodifiable(_alarmHistory);
+
   BleConnectionState get connectionState => _connectionState;
   List<ScanResult> get scanResults => _scanResults;
   TelemetryData? get latestTelemetry => _latestTelemetry;
@@ -35,17 +47,27 @@ class BleProvider extends ChangeNotifier {
         _latestAlarm = null;
         _scanResults = [];
         _connectedDeviceName = null;
+        _telemetryHistory.clear();
+        _alarmHistory.clear();
       }
       notifyListeners();
     });
 
     _telemetrySub = _ble.telemetryStream.listen((data) {
       _latestTelemetry = data;
+      _telemetryHistory.add(data);
+      if (_telemetryHistory.length > maxTelemetryHistory) {
+        _telemetryHistory.removeAt(0);
+      }
       notifyListeners();
     });
 
     _alarmSub = _ble.alarmStream.listen((data) {
       _latestAlarm = data;
+      _alarmHistory.add(data);
+      if (_alarmHistory.length > maxAlarmHistory) {
+        _alarmHistory.removeAt(0);
+      }
       notifyListeners();
     });
   }
@@ -82,6 +104,7 @@ class BleProvider extends ChangeNotifier {
   Future<void> connectDevice(BluetoothDevice device) async {
     _errorMessage = null;
     _connectedDeviceName = device.platformName;
+    _scanResults = [];
     notifyListeners();
 
     try {

@@ -99,24 +99,87 @@ class _ScanPageState extends State<ScanPage> {
             children: [
               // 已连接设备入口按钮
               if (ble.isConnected)
-                Card(
-                  margin: const EdgeInsets.all(12.0),
-                  color: Colors.green.shade50,
-                  child: ListTile(
-                    leading: const Icon(
-                      Icons.bluetooth_connected,
-                      color: Colors.green,
-                      size: 32,
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 12.0,
+                  ),
+                  child: Card(
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
                     ),
-                    title: Text(
-                      ble.connectedDeviceName ?? 'CareBand',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    color: Colors.white,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () {
+                        Navigator.pushNamed(context, '/device');
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: const Color(
+                                  0xFF2D7DD2,
+                                ).withValues(alpha: 0.12),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.bluetooth_connected,
+                                color: Color(0xFF2D7DD2),
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    ble.connectedDeviceName ?? 'CareBand',
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF212529),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 8,
+                                        height: 8,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFF45B7A0),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      const Text(
+                                        '已连接 - 点击查看设备数据',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: Color(0xFF6C757D),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.arrow_forward_ios,
+                              size: 16,
+                              color: Color(0xFF6C757D),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                    subtitle: const Text('已连接 - 点击查看设备数据'),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                    onTap: () {
-                      Navigator.pushNamed(context, '/device');
-                    },
                   ),
                 ),
               if (isScanning) const LinearProgressIndicator(),

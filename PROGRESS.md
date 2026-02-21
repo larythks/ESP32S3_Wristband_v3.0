@@ -22,7 +22,7 @@
 | Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | ✅ 已完成 | 2026-02-18 |
 | Week 3 | 迭代 3.4: 完整报警流程联调 | ✅ 已完成 | 2026-02-19 |
 | Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | ✅ 已完成 | 2026-02-20 |
-| Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | 🔲 待开始 | - |
+| Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | ✅ 已完成 | 2026-02-21 |
 | Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | 🔲 待开始 | - |
 | Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | 🔲 待开始 | - |
 
@@ -387,3 +387,43 @@
   - 修改: `mobile_flutter/lib/ble/ble_manager.dart`
 - **验收状态**: 待验收
 - **附带修复**: ISSUE-flutter-009
+
+---
+
+### 2026-02-21 - 迭代 4.2: 数据展示 UI + 报警 UI
+
+- **迭代**: Week 4 - 迭代 4.2
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 设计系统: 主题色 (信赖蓝 #2D7DD2)、品牌色 (温度橙/心率红/血氧蓝/步数绿)、Material 3 CardThemeData + NavigationBar
+  - DevicePage 重写为三 Tab 导航壳 (IndexedStack): 数据面板 / 报警记录 / 设置
+  - 报警弹窗从 SnackBar 升级为标准 AlertDialog (AlarmDialog)，含图标/类型名/触发值/ACK 按钮
+  - DashboardTab: 2×2 健康数据卡片网格 + fl_chart 趋势折线图 (心率/血氧/温度切换) + 手动测量按钮 (15s 倒计时)
+  - AlarmTab: 报警历史列表 (倒序)，未确认项红色左边框 + ACK 按钮
+  - SettingsTab: 设备信息卡、同步时间/请求上报操作、断开连接按钮、版本号
+  - BleProvider 新增 telemetryHistory (max 30) / alarmHistory (max 50) 内存历史记录
+  - AlarmTypeExtension: displayName/icon/color/formatValue/severity 扩展方法
+  - DataRepository 抽象接口 + InMemoryDataRepository (为 4.3 MQTT 预留)
+  - pubspec.yaml 新增 fl_chart ^0.70.0
+- **关键文件**:
+  - 修改: `mobile_flutter/pubspec.yaml`, `mobile_flutter/lib/main.dart`, `mobile_flutter/lib/data/models.dart`, `mobile_flutter/lib/data/ble_provider.dart`
+  - 重写: `mobile_flutter/lib/ui/device_page.dart`
+  - 新建: `mobile_flutter/lib/data/data_repository.dart`, `mobile_flutter/lib/ui/tabs/dashboard_tab.dart`, `mobile_flutter/lib/ui/tabs/alarm_tab.dart`, `mobile_flutter/lib/ui/tabs/settings_tab.dart`, `mobile_flutter/lib/ui/widgets/health_card.dart`, `mobile_flutter/lib/ui/widgets/trend_chart.dart`, `mobile_flutter/lib/ui/widgets/alarm_dialog.dart`
+- **验收状态**: 待验收
+  - `flutter pub get` ✅ 无错误
+  - `flutter analyze` ✅ 仅 2 个预存 ble_manager.dart 警告 (unused_field)，新代码 0 issues
+  - `flutter test` ✅ 63 tests passed
+- **附带修复**: ISSUE-flutter-010 (CardTheme→CardThemeData), ISSUE-flutter-011 (unused import), ISSUE-flutter-012 (unnecessary non-null assertion)
+
+---
+
+### 2026-02-21 - Bug 修复: ScanPage 返回后显示旧扫描结果
+
+- **迭代**: Week 4 - 迭代 4.1 后续修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - `BleProvider.connectDevice()` 中连接时清空 `_scanResults`，防止返回 ScanPage 时同时显示已连接设备卡片和旧扫描设备列表
+- **关键文件**:
+  - 修改: `mobile_flutter/lib/data/ble_provider.dart`
+- **验收状态**: 待验收
+- **附带修复**: ISSUE-flutter-013

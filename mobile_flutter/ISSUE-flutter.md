@@ -46,3 +46,35 @@
 - **后果**: 用户点击断开连接时，`disconnect()` 检测到 `_device == null` 直接 early return，仅清理 Dart 状态而从未向 ESP32 发送 BLE 断连命令，ESP32 不会重新广播
 - **解决方案**: 添加 `_isConnecting` 标志，在 `connect()` 执行期间设为 true，连接监听器中增加 `!_isConnecting` 条件，忽略连接过程中的瞬态断连事件。`_isConnecting` 在 `_updateState(connected)` 之前和 catch 块中重置为 false
 - **涉及文件**: `lib/ble/ble_manager.dart`
+
+---
+### ISSUE-010
+- **发现日期**: 2026-02-21
+- **原因**: 迭代 4.2 集成验证时，`main.dart` 使用 `CardTheme(...)` 构造 `ThemeData.cardTheme`，但 Flutter 3.11+ 中该属性类型已改为 `CardThemeData?`，导致 `argument_type_not_assignable` 编译错误
+- **后果**: `flutter analyze` 报 1 个 error，项目无法通过静态分析
+- **解决方案**: 将 `CardTheme(` 改为 `CardThemeData(`
+- **涉及文件**: `lib/main.dart`
+
+---
+### ISSUE-011
+- **发现日期**: 2026-02-21
+- **原因**: `dashboard_tab.dart` 中 `import '../../data/models.dart'` 未被使用（TrendMetric 枚举定义在 trend_chart.dart 内部，TelemetryData 通过 BleProvider 间接访问）
+- **后果**: `flutter analyze` 报 `unused_import` 警告
+- **解决方案**: 移除未使用的 import 语句
+- **涉及文件**: `lib/ui/tabs/dashboard_tab.dart`
+
+---
+### ISSUE-012
+- **发现日期**: 2026-02-21
+- **原因**: `health_card.dart` 中 `displaySubtitle` 变量已通过 `if (displaySubtitle != null)` 条件检查，在 Dart null safety 下已自动提升为非空类型，但代码仍使用 `displaySubtitle!` 非空断言
+- **后果**: `flutter analyze` 报 `unnecessary_non_null_assertion` 警告
+- **解决方案**: 移除多余的 `!` 操作符
+- **涉及文件**: `lib/ui/widgets/health_card.dart`
+
+---
+### ISSUE-013
+- **发现日期**: 2026-02-21
+- **原因**: `BleProvider.connectDevice()` 中取消了扫描订阅 (`_scanResultsSub?.cancel()`)，但未清空 `_scanResults` 列表。连接成功后 ScanPage 被 push 到导航栈底，用户从 DevicePage 按返回键回到 ScanPage 时，`ble.isConnected` 为 true 显示"已连接设备"卡片，同时 `_scanResults` 仍保留旧数据导致 ListView 继续渲染扫描设备列表
+- **后果**: 返回 ScanPage 后同时显示已连接设备入口卡片和扫描设备列表，造成"扫描界面与主界面混淆"的观感
+- **解决方案**: 在 `connectDevice()` 中设置 `_connectedDeviceName` 后立即执行 `_scanResults = []` 清空扫描结果，再调用 `notifyListeners()`
+- **涉及文件**: `lib/data/ble_provider.dart`
