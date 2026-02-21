@@ -251,7 +251,7 @@ static void sensor_task(void *arg)
         // 心率测量窗口状态机
         switch (s_ctx.hr_measure_state) {
             case HR_MEASURE_IDLE: {
-                // 根据模式选择间隔：实时模式 1秒，正常模式 120秒
+                // 根据模式选择间隔：实时模式 16秒，正常模式 8分钟
                 uint32_t hr_interval = (s_ctx.hr_mode == SAMPLING_MODE_REALTIME)
                                        ? SENSOR_REALTIME_INTERVAL
                                        : SENSOR_HR_AUTO_INTERVAL_MS;

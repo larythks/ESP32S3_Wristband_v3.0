@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'models.dart';
 import '../ble/ble_manager.dart';
+import '../mqtt/mqtt_gateway.dart';
 
 class BleProvider extends ChangeNotifier {
   final BleManager _ble = BleManager.instance;
@@ -13,6 +14,9 @@ class BleProvider extends ChangeNotifier {
   StreamSubscription<List<ScanResult>>? _scanResultsSub;
   StreamSubscription<TelemetryData>? _telemetrySub;
   StreamSubscription<AlarmData>? _alarmSub;
+  StreamSubscription<bool>? _mqttConnectedSub;
+
+  final MqttGateway _mqtt = MqttGateway.instance;
 
   BleConnectionState _connectionState = BleConnectionState.disconnected;
   List<ScanResult> _scanResults = [];
@@ -20,6 +24,7 @@ class BleProvider extends ChangeNotifier {
   AlarmData? _latestAlarm;
   String? _errorMessage;
   String? _connectedDeviceName;
+  bool _mqttConnected = false;
 
   // --- 历史记录（内存中） ---
   final List<TelemetryData> _telemetryHistory = [];
@@ -40,13 +45,16 @@ class BleProvider extends ChangeNotifier {
   bool get isConnected => _connectionState == BleConnectionState.connected;
   String? get errorMessage => _errorMessage;
   String? get connectedDeviceName => _connectedDeviceName;
+  bool get mqttConnected => _mqttConnected;
 
   BleProvider() {
     _connectionStateSub = _ble.connectionStateStream.listen((state) {
       _connectionState = state;
       if (state == BleConnectionState.connected) {
         _startBleService();
+        _startMqtt();
       } else if (state == BleConnectionState.disconnected) {
+        _stopMqtt();
         _stopBleService();
         _latestTelemetry = null;
         _latestAlarm = null;
@@ -64,6 +72,11 @@ class BleProvider extends ChangeNotifier {
       if (_telemetryHistory.length > maxTelemetryHistory) {
         _telemetryHistory.removeAt(0);
       }
+      try {
+        _mqtt.publishTelemetry(data);
+      } catch (e) {
+        debugPrint('[BleProvider] publishTelemetry error: $e');
+      }
       notifyListeners();
     });
 
@@ -72,6 +85,11 @@ class BleProvider extends ChangeNotifier {
       _alarmHistory.add(data);
       if (_alarmHistory.length > maxAlarmHistory) {
         _alarmHistory.removeAt(0);
+      }
+      try {
+        _mqtt.publishAlarm(data);
+      } catch (e) {
+        debugPrint('[BleProvider] publishAlarm error: $e');
       }
       notifyListeners();
     });
@@ -197,12 +215,34 @@ class BleProvider extends ChangeNotifier {
     });
   }
 
+  void _startMqtt() {
+    _mqttConnectedSub?.cancel();
+    _mqttConnectedSub = _mqtt.connectedStream.listen((connected) {
+      _mqttConnected = connected;
+      notifyListeners();
+    });
+    _mqtt.connect().catchError((e) {
+      debugPrint('[BleProvider] MQTT connect failed: $e');
+    });
+  }
+
+  void _stopMqtt() {
+    _mqttConnectedSub?.cancel();
+    _mqttConnectedSub = null;
+    _mqtt.disconnect().catchError((e) {
+      debugPrint('[BleProvider] MQTT disconnect failed: $e');
+    });
+    _mqttConnected = false;
+  }
+
   @override
   void dispose() {
     _connectionStateSub?.cancel();
     _scanResultsSub?.cancel();
     _telemetrySub?.cancel();
     _alarmSub?.cancel();
+    _mqttConnectedSub?.cancel();
+    _mqtt.dispose();
     _ble.dispose();
     super.dispose();
   }

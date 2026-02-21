@@ -194,11 +194,11 @@ typedef enum {
 
 /* ============== Telemetry 上报配置 ============== */
 
-/** Telemetry 上报间隔 (ms) - 常规模式 2 分钟 */
+/** Telemetry 上报间隔 (ms) - 常规模式 8 分钟 */
 #define BLE_TELEMETRY_INTERVAL_MS   120000
 
 /** Telemetry 上报间隔 - 实时检测模式 (ms) */
-#define BLE_TELEMETRY_REALTIME_INTERVAL_MS   5000
+#define BLE_TELEMETRY_REALTIME_INTERVAL_MS   16000
 
 /** Telemetry 上报任务栈大小 */
 #define BLE_TELEMETRY_TASK_STACK    3072

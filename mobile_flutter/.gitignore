@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+mqtt_config.dart
+
+PROMPT-4.2-enhancement.md
+
+CA/

@@ -100,6 +100,8 @@ class SettingsTab extends StatelessWidget {
             const Divider(height: 24),
             _buildConnectionRow(context, isConnected),
             const Divider(height: 24),
+            _buildCloudRow(context, ble.mqttConnected, isConnected),
+            const Divider(height: 24),
             _buildInfoRow(context, '电量', batteryText),
           ],
         ),
@@ -151,6 +153,53 @@ class SettingsTab extends StatelessWidget {
             const SizedBox(width: 6),
             Text(
               isConnected ? '已连接' : '未连接',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCloudRow(BuildContext context, bool mqttConnected, bool bleConnected) {
+    final Color dotColor;
+    final String label;
+    if (!bleConnected) {
+      dotColor = Colors.grey;
+      label = '未启用';
+    } else if (mqttConnected) {
+      dotColor = Colors.green;
+      label = '已连接';
+    } else {
+      dotColor = Colors.red;
+      label = '未连接';
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          '云端连接',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF6C757D),
+              ),
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: dotColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w500,
                   ),

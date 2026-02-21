@@ -23,7 +23,7 @@
 | Week 3 | 迭代 3.4: 完整报警流程联调 | ✅ 已完成 | 2026-02-19 |
 | Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | ✅ 已完成 | 2026-02-20 |
 | Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | ✅ 已完成 | 2026-02-21 |
-| Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | 🔲 待开始 | - |
+| Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | ✅ 已完成 | 2026-02-21 |
 | Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | 🔲 待开始 | - |
 
 ## 详细记录
@@ -110,7 +110,7 @@
 - **状态**: ✅ 已完成
 - **主要改动**:
   - 事件总线：基于 FreeRTOS Queue 的发布/订阅模式
-  - 传感器服务：常规采样（温度 30s、心率血氧 120s、IMU 50Hz）和实时采样（1s/次）两种模式
+  - 传感器服务：常规采样（温度 30s、心率血氧 480s、IMU 50Hz）和实时采样（16s/次）两种模式
   - DS18B20 采样改为异步状态机模式（非阻塞）
 - **关键文件**: components/services/event_bus/, components/services/sensor_service/, main/main.c
 - **附带修复**:
@@ -169,7 +169,7 @@
 - **主要改动**:
   - NimBLE 初始化、GATT 注册：1 个 PRIMARY 服务 + 4 个特征（Telemetry/Alarm/Command/Status）
   - 广播数据仅 Flags + 设备名，128-bit UUID 放入 Scan Response（ISSUE-005）
-  - Telemetry 上报任务：独立线程，间隔 120 秒
+  - Telemetry 上报任务：独立线程，间隔 480 秒
   - 连接/断连事件通过 event_bus 发布 EVT_BLE_CONN
 - **关键文件**: components/ble_gatt/
 
@@ -273,7 +273,7 @@
 - **主要改动**:
   - 报警缓存环形队列（N=16）+ BLE 重连补发任务
   - ACK_ALARM 命令对接 alarm_ack(event_id)
-  - Telemetry 实时频率切换（xTaskNotifyWait，正常 120s / 实时 5s）
+  - Telemetry 实时频率切换（xTaskNotifyWait，正常 480s / 实时 16s）
   - Status 特征返回真实 alarm_state
   - 删除 SPO2_WARNING 功能（ISSUE-036）
   - PRE_ALARM 播放 "pre_alarm_fall"，ALARMING 跌倒播放 "alarm_help"（ISSUE-037）
@@ -371,10 +371,31 @@
   - BleProvider 新增 telemetryHistory (max 30) / alarmHistory (max 50)
   - DataRepository 抽象接口 + InMemoryDataRepository（为 4.3 MQTT 预留）
 - **关键文件**: mobile_flutter/lib/ui/tabs/, mobile_flutter/lib/ui/widgets/, mobile_flutter/lib/data/data_repository.dart, mobile_flutter/lib/ui/device_page.dart
-- **验收状态**: 待验收
+- **验收状态**: ✅ 已验收
   - `flutter pub get` ✅ | `flutter analyze` ✅ | `flutter test` ✅ 63 tests passed
 - **附带修复**:
   - ISSUE-flutter-005: CardTheme→CardThemeData
   - ISSUE-flutter-006: unnecessary non-null assertion
   - ISSUE-flutter-008: 报警确认后 UI 未更新（ackAlarm 成功后更新本地 isAcked + notifyListeners）
   - ISSUE-flutter-010: 报警弹窗重复弹出已确认报警（Set<int> _shownAlarmIds 追踪）
+
+---
+
+### 2026-02-21 - 迭代 4.3: MQTT 网关 + EMQX Cloud 部署
+
+- **迭代**: Week 4 - 迭代 4.3
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - MqttConfig 常量类：broker/port/username/password/deviceId/clientId + 5 个 Topic getter
+  - MqttGateway 单例核心：TLS 连接（CA 证书 rootBundle 加载）、LWT 遗嘱消息、指数退避断线重连（2s→30s max）
+  - 上行转发：Telemetry→JSON QoS0、Alarm→JSON QoS1（alarm_type 枚举→字符串映射）
+  - 下行命令：订阅 cmd topic，解析 JSON 后调用 BleManager 对应方法（ack_alarm/sync_time/request_report/manual_measure）
+  - 在线状态：连接成功发布 online status（retained），主动断开发布 offline status
+  - BleProvider 集成：BLE connected→启动 MQTT，BLE disconnected→停止 MQTT；telemetry/alarm 监听中同步转发
+  - SettingsTab 新增"云端连接"状态行（绿色已连接/红色未连接/灰色未启用）
+  - pubspec.yaml 添加 mqtt_client ^10.6.0 依赖 + CA 证书 asset 声明
+- **关键文件**: mobile_flutter/lib/mqtt/mqtt_config.dart, mobile_flutter/lib/mqtt/mqtt_gateway.dart, mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/tabs/settings_tab.dart, mobile_flutter/pubspec.yaml
+- **验收状态**: ✅ 已验收
+  - `flutter pub get` ✅ | `flutter analyze` ✅ (0 error, 3 pre-existing warnings) | `flutter test` ✅ 63 tests passed
+- **附带修复**:
+  - ISSUE-flutter-011: jsonEncode 异常杀死 Stream 监听器导致后续数据不再转发，整体 try-catch 保护 + 移除 logOnce 标志

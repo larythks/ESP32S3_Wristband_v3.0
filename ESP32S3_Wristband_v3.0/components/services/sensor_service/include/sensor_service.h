@@ -17,15 +17,15 @@ extern "C" {
 
 // 常规采样间隔 (ms)
 #define SENSOR_TEMP_NORMAL_INTERVAL     30000   // 环境温度: 30秒
-#define SENSOR_HR_NORMAL_INTERVAL       120000  // 心率血氧: 120秒
+#define SENSOR_HR_NORMAL_INTERVAL       480000  // 心率血氧: 480秒(8分钟)
 #define SENSOR_IMU_NORMAL_INTERVAL      20      // IMU: 50Hz (20ms)
 
 // 心率测量窗口配置
 #define SENSOR_HR_MEASURE_WINDOW_MS     15000   // 15秒测量窗口
-#define SENSOR_HR_AUTO_INTERVAL_MS      120000  // 2分钟自动触发间隔
+#define SENSOR_HR_AUTO_INTERVAL_MS      480000  // 8分钟自动触发间隔
 
 // 实时采样间隔 (ms)
-#define SENSOR_REALTIME_INTERVAL        1000    // 实时模式: 1秒
+#define SENSOR_REALTIME_INTERVAL        16000   // 实时模式: 16秒(匹配15秒HR测量窗口)
 
 // PPG 批量数据配置
 #define PPG_BATCH_MAX           16      // 单次取出最大样本数

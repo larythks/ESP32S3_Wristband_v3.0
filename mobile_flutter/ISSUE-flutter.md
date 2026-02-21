@@ -94,3 +94,11 @@
 - **后果**: 每次重新进入设备界面时，已确认的报警仍然弹窗；同时只有最新一条报警会弹窗，之前的未确认报警被忽略
 - **解决方案**: 用 `Set<int> _shownAlarmIds` 记录当前会话中已弹过弹窗的 eventId，用 `_isShowingDialog` 防止同时弹出多个对话框。`_showNextUnackedAlarm()` 从 `alarmHistory` 中查找第一条「未确认 且 未弹过」的报警弹窗展示，弹窗关闭后递归调用自身继续弹下一条，直到没有更多未确认报警
 - **涉及文件**: `lib/ui/device_page.dart`
+
+---
+### ISSUE-011
+- **发现日期**: 2026-02-21
+- **原因**: `MqttGateway.publishTelemetry()` 和 `publishAlarm()` 中 `jsonEncode()` 位于 try-catch 外部。如果 `TelemetryData` 中包含 `NaN` 或 `Infinity` 值，`jsonEncode()` 抛出 `JsonUnsupportedObjectError`，该异常向上传播到 `BleProvider` 的 `_telemetrySub` / `_alarmSub` Stream 监听器，导致 StreamSubscription 永久取消。此后所有后续的 telemetry/alarm 数据均不再触发监听回调，MQTT 发布永远停止。同时 `_telemetryLogOnce` / `_alarmLogOnce` 标志导致仅首次发布有日志，后续发布无任何确认日志，`_publish()` 返回值未被检查
+- **后果**: 连接后仅第一条数据能触发 publish 日志，后续所有 telemetry 和 alarm 数据均不上传且无错误日志；即使首条 publish 执行成功，云端可能因 QoS/网络问题未收到
+- **解决方案**: (1) `publishTelemetry()` 和 `publishAlarm()` 整体包裹在 try-catch 中，捕获 jsonEncode 和所有其他异常; (2) `BleProvider` 中 `_mqtt.publishTelemetry()` / `_mqtt.publishAlarm()` 调用也加 try-catch 保护，防止异常杀死 Stream 监听器; (3) 移除 `_logOnce` 标志，每次 publish 均打印 msgId 和关键数据; (4) `_publish()` 返回 `int?`，调用方可检查是否成功
+- **涉及文件**: `lib/mqtt/mqtt_gateway.dart`, `lib/data/ble_provider.dart`

@@ -372,7 +372,7 @@ static void ui_exit_manual_measure_locked(void)
  * @brief UI 刷新任务（独立任务，替代 Timer Service 回调）
  *
  * 以 500ms 为基础周期运行，承担以下职责：
- * - 每 2 分钟全量刷新当前页面（心率/血氧/环境温度等数据更新）
+ * - 每 8 分钟全量刷新当前页面（心率/血氧/环境温度等数据更新）
  * - HOME 页：每 10 秒检查 RTC 分钟变化，触发重绘
  * - STEPS 页：每 500ms 局部刷新步数数字
  * - MANUAL_MEASURE 页：管理倒计时/等待/结果三阶段状态机
@@ -381,7 +381,7 @@ static void ui_task(void *arg)
 {
     (void)arg;
 
-    /* 2 分钟全量刷新计数器: 120000ms / 500ms = 240 次 */
+    /* 8 分钟全量刷新计数器: 480000ms / 500ms = 960 次 */
     uint32_t full_refresh_counter = 0;
     const uint32_t full_refresh_cycles = UI_REFRESH_INTERVAL_MS / UI_FAST_REFRESH_INTERVAL_MS;
 
