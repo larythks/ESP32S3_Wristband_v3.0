@@ -16,6 +16,9 @@ abstract class DataRepository {
   /// 获取报警历史
   Future<List<AlarmData>> getAlarmHistory({int limit = 50});
 
+  /// 更新报警确认状态
+  Future<void> updateAlarmAcked(int eventId);
+
   /// 释放资源
   Future<void> dispose();
 }
@@ -53,6 +56,16 @@ class InMemoryDataRepository implements DataRepository {
   Future<List<AlarmData>> getAlarmHistory({int limit = 50}) async {
     final start = _alarmList.length > limit ? _alarmList.length - limit : 0;
     return List.unmodifiable(_alarmList.sublist(start));
+  }
+
+  @override
+  Future<void> updateAlarmAcked(int eventId) async {
+    for (final alarm in _alarmList) {
+      if (alarm.eventId == eventId) {
+        alarm.isAcked = true;
+        break;
+      }
+    }
   }
 
   @override

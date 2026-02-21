@@ -45,6 +45,7 @@ class _ScanPageState extends State<ScanPage> {
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.location,
+      Permission.notification,
     ].request();
   }
 

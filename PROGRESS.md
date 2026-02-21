@@ -399,3 +399,30 @@
   - `flutter pub get` ✅ | `flutter analyze` ✅ (0 error, 3 pre-existing warnings) | `flutter test` ✅ 63 tests passed
 - **附带修复**:
   - ISSUE-flutter-011: jsonEncode 异常杀死 Stream 监听器导致后续数据不再转发，整体 try-catch 保护 + 移除 logOnce 标志
+
+---
+
+### 2026-02-21 - 迭代 4.2 增强: SQLite 本地存储 + Android 报警通知
+
+- **迭代**: Week 4 - 迭代 4.2 增强
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - **SQLite 本地存储**:
+    - DatabaseHelper 单例：careband.db，telemetry + alarm 两表 + 时间索引 + event_id 唯一约束
+    - SqliteDataRepository 实现 DataRepository 接口，包裹 DatabaseHelper CRUD
+    - 24h 自动清理：每 100 次 Telemetry 写入触发一次 cleanup
+    - BleProvider 集成：构造时异步加载历史（telemetry 360 条 / alarm 100 条），BLE 数据写入同步存库
+    - BLE 断连不再清空历史数据，ACK 操作同步更新 SQLite
+    - SQLite 初始化失败时自动降级为纯内存模式，不影响核心 BLE 功能
+  - **Android 报警通知**:
+    - NotificationService 单例：alarm_channel（Importance.high, 不震动），按 AlarmType 生成中文标题和正文
+    - BleProvider 添加 WidgetsBindingObserver 检测前后台状态，后台时触发系统通知
+    - 通知点击跳转：pendingTabIndex 机制 + navigatorKey 导航到 DevicePage AlarmTab
+    - ScanPage 追加 Permission.notification 运行时权限请求（Android 13+）
+  - DataRepository 接口新增 updateAlarmAcked 方法
+  - main.dart 添加 WidgetsFlutterBinding.ensureInitialized + NotificationService 初始化
+- **关键文件**:
+  - 新建: mobile_flutter/lib/data/database_helper.dart, mobile_flutter/lib/data/sqlite_repository.dart, mobile_flutter/lib/services/notification_service.dart
+  - 修改: mobile_flutter/pubspec.yaml, mobile_flutter/lib/main.dart, mobile_flutter/lib/data/data_repository.dart, mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/device_page.dart, mobile_flutter/lib/ui/scan_page.dart
+- **验收状态**: 待验收
+  - `flutter pub get` ✅ | `flutter analyze` ✅ (0 error, 3 pre-existing warnings) | `flutter test` ✅ 63 tests passed

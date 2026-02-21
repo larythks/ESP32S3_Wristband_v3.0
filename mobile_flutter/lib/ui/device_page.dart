@@ -25,6 +25,22 @@ class _DevicePageState extends State<DevicePage> {
     SettingsTab(),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    // 通知点击跳转：检查 pendingTabIndex
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ble = context.read<BleProvider>();
+      if (ble.pendingTabIndex != null) {
+        setState(() {
+          _currentIndex = ble.pendingTabIndex!;
+        });
+        ble.pendingTabIndex = null;
+      }
+    });
+  }
+
   void _showNextUnackedAlarm(BuildContext context, BleProvider ble) {
     if (_isShowingDialog || !mounted) return;
 
@@ -75,6 +91,15 @@ class _DevicePageState extends State<DevicePage> {
 
         // 报警弹窗触发：仅弹出未确认的报警
         _showNextUnackedAlarm(context, ble);
+
+        // 通知点击跳转
+        if (ble.pendingTabIndex != null) {
+          final idx = ble.pendingTabIndex!;
+          ble.pendingTabIndex = null;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _currentIndex = idx);
+          });
+        }
 
         return Scaffold(
           body: IndexedStack(

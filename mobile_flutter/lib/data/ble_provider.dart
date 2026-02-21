@@ -1,12 +1,14 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'models.dart';
+import 'sqlite_repository.dart';
 import '../ble/ble_manager.dart';
 import '../mqtt/mqtt_gateway.dart';
+import '../services/notification_service.dart';
 
-class BleProvider extends ChangeNotifier {
+class BleProvider extends ChangeNotifier with WidgetsBindingObserver {
   final BleManager _ble = BleManager.instance;
   static const _platform = MethodChannel('com.careband.app/platform');
 
@@ -17,6 +19,8 @@ class BleProvider extends ChangeNotifier {
   StreamSubscription<bool>? _mqttConnectedSub;
 
   final MqttGateway _mqtt = MqttGateway.instance;
+  late final SqliteDataRepository _repo;
+  bool _repoReady = false;
 
   BleConnectionState _connectionState = BleConnectionState.disconnected;
   List<ScanResult> _scanResults = [];
@@ -25,13 +29,17 @@ class BleProvider extends ChangeNotifier {
   String? _errorMessage;
   String? _connectedDeviceName;
   bool _mqttConnected = false;
+  bool _isAppInForeground = true;
 
-  // --- 历史记录（内存中） ---
-  final List<TelemetryData> _telemetryHistory = [];
-  final List<AlarmData> _alarmHistory = [];
+  /// 通知点击后待跳转的 Tab 索引（null=无待跳转，1=AlarmTab）
+  int? pendingTabIndex;
 
-  static const int maxTelemetryHistory = 30;
-  static const int maxAlarmHistory = 50;
+  // --- 历史记录（内存缓存 + SQLite 持久化） ---
+  List<TelemetryData> _telemetryHistory = [];
+  List<AlarmData> _alarmHistory = [];
+
+  static const int _maxTelemetryCache = 360;
+  static const int _maxAlarmCache = 100;
 
   List<TelemetryData> get telemetryHistory =>
       List.unmodifiable(_telemetryHistory);
@@ -48,6 +56,9 @@ class BleProvider extends ChangeNotifier {
   bool get mqttConnected => _mqttConnected;
 
   BleProvider() {
+    WidgetsBinding.instance.addObserver(this);
+    _initRepository();
+
     _connectionStateSub = _ble.connectionStateStream.listen((state) {
       _connectionState = state;
       if (state == BleConnectionState.connected) {
@@ -60,8 +71,7 @@ class BleProvider extends ChangeNotifier {
         _latestAlarm = null;
         _scanResults = [];
         _connectedDeviceName = null;
-        _telemetryHistory.clear();
-        _alarmHistory.clear();
+        // 不再清空历史，数据已持久化到 SQLite
       }
       notifyListeners();
     });
@@ -69,8 +79,11 @@ class BleProvider extends ChangeNotifier {
     _telemetrySub = _ble.telemetryStream.listen((data) {
       _latestTelemetry = data;
       _telemetryHistory.add(data);
-      if (_telemetryHistory.length > maxTelemetryHistory) {
+      if (_telemetryHistory.length > _maxTelemetryCache) {
         _telemetryHistory.removeAt(0);
+      }
+      if (_repoReady) {
+        _repo.saveTelemetry(data);
       }
       try {
         _mqtt.publishTelemetry(data);
@@ -83,16 +96,37 @@ class BleProvider extends ChangeNotifier {
     _alarmSub = _ble.alarmStream.listen((data) {
       _latestAlarm = data;
       _alarmHistory.add(data);
-      if (_alarmHistory.length > maxAlarmHistory) {
+      if (_alarmHistory.length > _maxAlarmCache) {
         _alarmHistory.removeAt(0);
+      }
+      if (_repoReady) {
+        _repo.saveAlarm(data);
       }
       try {
         _mqtt.publishAlarm(data);
       } catch (e) {
         debugPrint('[BleProvider] publishAlarm error: $e');
       }
+      // App 不在前台时发送系统通知
+      if (!_isAppInForeground) {
+        NotificationService.instance.showAlarmNotification(data);
+      }
       notifyListeners();
     });
+  }
+
+  Future<void> _initRepository() async {
+    try {
+      _repo = SqliteDataRepository();
+      await _repo.cleanup();
+      _telemetryHistory = await _repo.getTelemetryHistory(limit: 360);
+      _alarmHistory = await _repo.getAlarmHistory(limit: 100);
+      _repoReady = true;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[BleProvider] SQLite init failed: $e');
+      // 降级为纯内存模式，不影响核心 BLE 功能
+    }
   }
 
   Future<void> startScan() async {
@@ -166,6 +200,10 @@ class BleProvider extends ChangeNotifier {
           break;
         }
       }
+      // 同步更新 SQLite
+      if (_repoReady) {
+        await _repo.updateAlarmAcked(eventId);
+      }
       notifyListeners();
     } catch (e) {
       _errorMessage = '确认报警失败: $e';
@@ -236,7 +274,13 @@ class BleProvider extends ChangeNotifier {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isAppInForeground = (state == AppLifecycleState.resumed);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _connectionStateSub?.cancel();
     _scanResultsSub?.cancel();
     _telemetrySub?.cancel();
@@ -244,6 +288,9 @@ class BleProvider extends ChangeNotifier {
     _mqttConnectedSub?.cancel();
     _mqtt.dispose();
     _ble.dispose();
+    if (_repoReady) {
+      _repo.dispose();
+    }
     super.dispose();
   }
 }
