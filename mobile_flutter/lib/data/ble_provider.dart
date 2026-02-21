@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'models.dart';
 import '../ble/ble_manager.dart';
 
 class BleProvider extends ChangeNotifier {
   final BleManager _ble = BleManager.instance;
+  static const _platform = MethodChannel('com.careband.app/platform');
 
   StreamSubscription<BleConnectionState>? _connectionStateSub;
   StreamSubscription<List<ScanResult>>? _scanResultsSub;
@@ -42,7 +44,10 @@ class BleProvider extends ChangeNotifier {
   BleProvider() {
     _connectionStateSub = _ble.connectionStateStream.listen((state) {
       _connectionState = state;
-      if (state == BleConnectionState.disconnected) {
+      if (state == BleConnectionState.connected) {
+        _startBleService();
+      } else if (state == BleConnectionState.disconnected) {
+        _stopBleService();
         _latestTelemetry = null;
         _latestAlarm = null;
         _scanResults = [];
@@ -79,12 +84,16 @@ class BleProvider extends ChangeNotifier {
 
     try {
       _scanResultsSub?.cancel();
+      _scanResultsSub = null;
+      await _ble.startScan();
+      // 扫描启动成功后再订阅结果流，避免收到系统缓存的旧结果
       _scanResultsSub = _ble.scanResultsStream.listen((results) {
         _scanResults = results;
         notifyListeners();
       });
-      await _ble.startScan();
     } catch (e) {
+      _scanResultsSub?.cancel();
+      _scanResultsSub = null;
       _errorMessage = '扫描失败: $e';
       notifyListeners();
     }
@@ -132,6 +141,14 @@ class BleProvider extends ChangeNotifier {
   Future<void> ackAlarm(int eventId) async {
     try {
       await _ble.sendAckAlarm(eventId);
+      // 更新本地报警状态为已确认
+      for (final alarm in _alarmHistory) {
+        if (alarm.eventId == eventId) {
+          alarm.isAcked = true;
+          break;
+        }
+      }
+      notifyListeners();
     } catch (e) {
       _errorMessage = '确认报警失败: $e';
       notifyListeners();
@@ -166,6 +183,18 @@ class BleProvider extends ChangeNotifier {
       _errorMessage = '手动测量失败: $e';
       notifyListeners();
     }
+  }
+
+  void _startBleService() {
+    _platform.invokeMethod('startBleService').catchError((e) {
+      debugPrint('[BleProvider] startBleService failed: $e');
+    });
+  }
+
+  void _stopBleService() {
+    _platform.invokeMethod('stopBleService').catchError((e) {
+      debugPrint('[BleProvider] stopBleService failed: $e');
+    });
   }
 
   @override

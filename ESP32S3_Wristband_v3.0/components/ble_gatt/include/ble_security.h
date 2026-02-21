@@ -37,6 +37,12 @@ esp_err_t ble_security_init(void);
 bool ble_security_validate_nonce(uint32_t nonce);
 
 /**
+ * @brief 重置 nonce 计数器
+ * 在 BLE 断开连接时调用，允许新连接从 nonce=1 重新开始
+ */
+void ble_security_reset_nonce(void);
+
+/**
  * @brief 检查连接是否已加密
  * @param conn_handle 连接句柄
  * @return true  连接已加密

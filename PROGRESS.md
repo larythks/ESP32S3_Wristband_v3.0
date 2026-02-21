@@ -427,3 +427,63 @@
   - 修改: `mobile_flutter/lib/data/ble_provider.dart`
 - **验收状态**: 待验收
 - **附带修复**: ISSUE-flutter-013
+
+---
+
+### 2026-02-21 - Bug 修复: 已连接时扫描异常 + 返回键退出 App
+
+- **迭代**: Week 4 - 迭代 4.1 后续修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 修复已连接时点击搜索按钮出现错误消息和旧扫描结果的问题：`startScan()` 订阅移到 `_ble.startScan()` 成功后，catch 中清理订阅；ScanPage 已连接时隐藏扫描按钮
+  - 修复 ScanPage 按返回键直接退出 App 导致 BLE 断连：`PopScope` 拦截返回键，`SystemNavigator.pop()` 最小化至后台
+- **关键文件**:
+  - 修改: `mobile_flutter/lib/data/ble_provider.dart`, `mobile_flutter/lib/ui/scan_page.dart`
+- **验收状态**: 待验收
+- **附带修复**: ISSUE-flutter-014, ISSUE-flutter-015
+
+---
+
+### 2026-02-21 - Bug 修复: 报警确认后 UI 未更新
+
+- **迭代**: Week 4 - 迭代 4.2 后续修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - `BleProvider.ackAlarm()` 发送 ACK 命令成功后，更新本地 `_alarmHistory` 中对应报警的 `isAcked` 状态并调用 `notifyListeners()` 刷新 UI
+- **关键文件**:
+  - 修改: `mobile_flutter/lib/data/ble_provider.dart`
+- **验收状态**: 待验收
+- **附带修复**: ISSUE-flutter-016
+
+---
+
+### 2026-02-21 - 前台服务保活 BLE 连接
+
+- **迭代**: Week 4 - 迭代 4.1 后续修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 新建 `BleKeepAliveService` Android 前台服务，BLE 连接时显示通知栏常驻通知（"蓝牙连接中"），防止系统回收进程
+  - `MainActivity` 添加 MethodChannel (`com.careband.app/platform`)，提供 `moveTaskToBack`/`startBleService`/`stopBleService` 三个方法
+  - `scan_page.dart` 返回键从 `SystemNavigator.pop()` 改为 `moveTaskToBack`，退到后台而非销毁 Activity
+  - `BleProvider` 连接成功时自动启动前台服务，断开时自动停止
+  - AndroidManifest 添加 `FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_CONNECTED_DEVICE`/`POST_NOTIFICATIONS` 权限，声明 `BleKeepAliveService`
+- **关键文件**:
+  - 新建: `mobile_flutter/android/app/src/main/kotlin/com/careband/app/BleKeepAliveService.kt`
+  - 修改: `mobile_flutter/android/app/src/main/kotlin/com/careband/app/MainActivity.kt`, `mobile_flutter/android/app/src/main/AndroidManifest.xml`, `mobile_flutter/lib/ui/scan_page.dart`, `mobile_flutter/lib/data/ble_provider.dart`
+- **验收状态**: 待验收
+- **附带修复**: ISSUE-flutter-017
+
+---
+
+### 2026-02-21 - Bug 修复: 报警弹窗重复弹出已确认报警
+
+- **迭代**: Week 4 - 迭代 4.2 后续修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 重写 DevicePage 报警弹窗逻辑：用 `Set<int> _shownAlarmIds` 追踪已弹过的 eventId，用 `_isShowingDialog` 防止并发弹窗
+  - `_showNextUnackedAlarm()` 仅弹出未确认且未弹过的报警，弹窗关闭后递归弹下一条
+  - 重新进入 DevicePage 时只弹出所有未确认报警，已确认的不再弹出
+- **关键文件**:
+  - 修改: `mobile_flutter/lib/ui/device_page.dart`
+- **验收状态**: 待验收
+- **附带修复**: ISSUE-flutter-018

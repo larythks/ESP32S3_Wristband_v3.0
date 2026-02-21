@@ -78,3 +78,43 @@
 - **后果**: 返回 ScanPage 后同时显示已连接设备入口卡片和扫描设备列表，造成"扫描界面与主界面混淆"的观感
 - **解决方案**: 在 `connectDevice()` 中设置 `_connectedDeviceName` 后立即执行 `_scanResults = []` 清空扫描结果，再调用 `notifyListeners()`
 - **涉及文件**: `lib/data/ble_provider.dart`
+
+---
+### ISSUE-014
+- **发现日期**: 2026-02-21
+- **原因**: `BleProvider.startScan()` 中在调用 `_ble.startScan()` 之前就订阅了 `scanResultsStream`，`FlutterBluePlus.scanResults` 立即发送系统缓存的旧扫描结果填充 `_scanResults`。随后 `_ble.startScan()` 因设备仍连接而抛异常，但订阅未取消，旧结果留在列表中。同时 ScanPage 在已连接状态下仍显示扫描按钮，允许用户触发无效扫描
+- **后果**: 已连接时点击搜索按钮，同时出现错误消息 "扫描失败: Device still connected" 和旧的扫描设备列表
+- **解决方案**: (1) `startScan()` 中将 `scanResultsStream` 订阅移到 `_ble.startScan()` 成功之后，catch 中取消订阅并置 null；(2) ScanPage 的 AppBar actions 中增加 `!ble.isConnected` 条件，已连接时隐藏扫描按钮
+- **涉及文件**: `lib/data/ble_provider.dart`, `lib/ui/scan_page.dart`
+
+---
+### ISSUE-015
+- **发现日期**: 2026-02-21
+- **原因**: ScanPage 是 Flutter 应用的初始路由（根路由），Android 系统返回键在根路由上的默认行为是 `Activity.finish()` 退出应用，导致 Dart VM 被销毁、BLE 连接随之断开
+- **后果**: 用户在主界面（ScanPage）按返回键时 App 直接退出，BLE 连接丢失
+- **解决方案**: 使用 `PopScope(canPop: false)` 拦截返回键，`onPopInvokedWithResult` 中调用 `SystemNavigator.pop()` 将 App 最小化至后台而非退出，保持 BLE 连接
+- **涉及文件**: `lib/ui/scan_page.dart`
+
+---
+### ISSUE-016
+- **发现日期**: 2026-02-21
+- **原因**: `BleProvider.ackAlarm()` 仅向 BLE 设备发送 ACK 命令，未更新本地 `_alarmHistory` 中对应 `AlarmData.isAcked` 状态，也未调用 `notifyListeners()` 触发 UI 刷新
+- **后果**: 用户在报警记录页面点击"确认"按钮后，命令已发送到设备，但 UI 仍显示"未确认"状态，不会变为"已确认"
+- **解决方案**: `ackAlarm()` 成功发送命令后，遍历 `_alarmHistory` 找到匹配 `eventId` 的报警项设置 `isAcked = true`，然后调用 `notifyListeners()` 刷新 UI
+- **涉及文件**: `lib/data/ble_provider.dart`
+
+---
+### ISSUE-017
+- **发现日期**: 2026-02-21
+- **原因**: `ScanPage` 使用 `SystemNavigator.pop()` 处理返回键，该方法在 Android 上调用 `Activity.finish()` 销毁 Activity。应用没有前台服务保活，系统在 Activity 销毁后很快回收进程，导致 BLE 连接断开
+- **后果**: 用户在主界面按返回键退到后台时，App 进程被杀，蓝牙连接断开
+- **解决方案**: (1) 新建 `BleKeepAliveService` 前台服务，BLE 连接时启动通知栏常驻服务防止进程被回收；(2) `MainActivity` 添加 MethodChannel 提供 `moveTaskToBack`/`startBleService`/`stopBleService` 三个原生方法；(3) `scan_page.dart` 返回键改为调用 `moveTaskToBack` 退到后台；(4) `BleProvider` 在连接成功时启动前台服务、断开时停止服务；(5) AndroidManifest 添加 `FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_CONNECTED_DEVICE`/`POST_NOTIFICATIONS` 权限并声明 Service
+- **涉及文件**: `android/.../BleKeepAliveService.kt`(新建), `android/.../MainActivity.kt`, `android/.../AndroidManifest.xml`, `lib/ui/scan_page.dart`, `lib/data/ble_provider.dart`
+
+---
+### ISSUE-018
+- **发现日期**: 2026-02-21
+- **原因**: `DevicePage._handleAlarmDialog()` 使用 `_lastShownAlarm` 引用对比来判断是否弹窗。每次重新进入 DevicePage 时 State 重建、`_lastShownAlarm` 重置为 null，导致 `latestAlarm` 无论是否已确认都会再次弹出。且该方法仅处理最新一条报警，无法弹出历史中其他未确认的报警
+- **后果**: 每次重新进入设备界面时，已确认的报警仍然弹窗；同时只有最新一条报警会弹窗，之前的未确认报警被忽略
+- **解决方案**: 用 `Set<int> _shownAlarmIds` 记录当前会话中已弹过弹窗的 eventId，用 `_isShowingDialog` 防止同时弹出多个对话框。`_showNextUnackedAlarm()` 从 `alarmHistory` 中查找第一条「未确认 且 未弹过」的报警弹窗展示，弹窗关闭后递归调用自身继续弹下一条，直到没有更多未确认报警
+- **涉及文件**: `lib/ui/device_page.dart`

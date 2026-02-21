@@ -16,7 +16,8 @@ class DevicePage extends StatefulWidget {
 
 class _DevicePageState extends State<DevicePage> {
   int _currentIndex = 0;
-  AlarmData? _lastShownAlarm;
+  final Set<int> _shownAlarmIds = {};
+  bool _isShowingDialog = false;
 
   final List<Widget> _tabs = const [
     DashboardTab(),
@@ -24,27 +25,39 @@ class _DevicePageState extends State<DevicePage> {
     SettingsTab(),
   ];
 
-  void _handleAlarmDialog(BuildContext context, BleProvider ble) {
-    final alarm = ble.latestAlarm;
-    if (alarm != null && alarm != _lastShownAlarm) {
-      _lastShownAlarm = alarm;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          showDialog(
-            context: context,
-            barrierDismissible: true,
-            builder: (_) => AlarmDialog(
-              alarm: alarm,
-              onAck: () {
-                ble.ackAlarm(alarm.eventId);
-                Navigator.of(context).pop();
-              },
-              onDismiss: () => Navigator.of(context).pop(),
-            ),
-          );
-        }
+  void _showNextUnackedAlarm(BuildContext context, BleProvider ble) {
+    if (_isShowingDialog || !mounted) return;
+
+    final alarm = ble.alarmHistory.cast<AlarmData?>().firstWhere(
+      (a) => !a!.isAcked && !_shownAlarmIds.contains(a.eventId),
+      orElse: () => null,
+    );
+    if (alarm == null) return;
+
+    _shownAlarmIds.add(alarm.eventId);
+    _isShowingDialog = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _isShowingDialog = false;
+        return;
+      }
+      showDialog(
+        context: context,
+        barrierDismissible: true,
+        builder: (_) => AlarmDialog(
+          alarm: alarm,
+          onAck: () {
+            ble.ackAlarm(alarm.eventId);
+            Navigator.of(context).pop();
+          },
+          onDismiss: () => Navigator.of(context).pop(),
+        ),
+      ).then((_) {
+        _isShowingDialog = false;
+        _showNextUnackedAlarm(context, ble);
       });
-    }
+    });
   }
 
   @override
@@ -60,8 +73,8 @@ class _DevicePageState extends State<DevicePage> {
           });
         }
 
-        // 报警弹窗触发
-        _handleAlarmDialog(context, ble);
+        // 报警弹窗触发：仅弹出未确认的报警
+        _showNextUnackedAlarm(context, ble);
 
         return Scaffold(
           body: IndexedStack(
