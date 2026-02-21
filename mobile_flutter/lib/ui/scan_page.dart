@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../data/ble_provider.dart';
@@ -13,6 +14,23 @@ class ScanPage extends StatefulWidget {
 }
 
 class _ScanPageState extends State<ScanPage> {
+  static final Guid _careBandServiceUuid = Guid(
+    '0000ff00-0000-1000-8000-00805f9b34fb',
+  );
+
+  bool _navigatedToDevice = false;
+
+  bool _isCareBandDevice(ScanResult result) {
+    final platformName = result.device.platformName.toLowerCase();
+    final advName = result.advertisementData.advName.toLowerCase();
+    final hasCareBandName =
+        platformName.contains('careband') || advName.contains('careband');
+    final hasCareBandService = result.advertisementData.serviceUuids.contains(
+      _careBandServiceUuid,
+    );
+    return hasCareBandName || hasCareBandService;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -31,18 +49,24 @@ class _ScanPageState extends State<ScanPage> {
   Widget build(BuildContext context) {
     return Consumer<BleProvider>(
       builder: (context, ble, child) {
-        // 连接成功后自动跳转到设备页
-        if (ble.connectionState == BleConnectionState.connected) {
+        // 连接成功后自动跳转到设备页（仅一次）
+        if (ble.connectionState == BleConnectionState.connected &&
+            !_navigatedToDevice) {
+          _navigatedToDevice = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            Navigator.pushNamed(context, '/device');
+            if (mounted) {
+              Navigator.pushNamed(context, '/device');
+            }
           });
+        } else if (ble.connectionState == BleConnectionState.disconnected) {
+          _navigatedToDevice = false;
         }
 
         final isScanning = ble.connectionState == BleConnectionState.scanning;
 
         // 过滤只显示 CareBand 设备
         final filteredResults = ble.scanResults
-            .where((r) => r.device.platformName.contains('CareBand'))
+            .where(_isCareBandDevice)
             .toList();
 
         return Scaffold(
@@ -73,8 +97,29 @@ class _ScanPageState extends State<ScanPage> {
           ),
           body: Column(
             children: [
-              if (isScanning)
-                const LinearProgressIndicator(),
+              // 已连接设备入口按钮
+              if (ble.isConnected)
+                Card(
+                  margin: const EdgeInsets.all(12.0),
+                  color: Colors.green.shade50,
+                  child: ListTile(
+                    leading: const Icon(
+                      Icons.bluetooth_connected,
+                      color: Colors.green,
+                      size: 32,
+                    ),
+                    title: Text(
+                      ble.connectedDeviceName ?? 'CareBand',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: const Text('已连接 - 点击查看设备数据'),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      Navigator.pushNamed(context, '/device');
+                    },
+                  ),
+                ),
+              if (isScanning) const LinearProgressIndicator(),
               if (ble.errorMessage != null)
                 Padding(
                   padding: const EdgeInsets.all(8.0),

@@ -5,11 +5,7 @@ class DeviceTile extends StatelessWidget {
   final ScanResult result;
   final VoidCallback onTap;
 
-  const DeviceTile({
-    super.key,
-    required this.result,
-    required this.onTap,
-  });
+  const DeviceTile({super.key, required this.result, required this.onTap});
 
   Widget _buildSignalIcon(int rssi) {
     IconData icon;
@@ -38,7 +34,9 @@ class DeviceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final deviceName = result.device.platformName.isNotEmpty
         ? result.device.platformName
-        : 'Unknown Device';
+        : (result.advertisementData.advName.isNotEmpty
+              ? result.advertisementData.advName
+              : 'Unknown Device');
 
     return ListTile(
       title: Text(deviceName),

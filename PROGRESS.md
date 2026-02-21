@@ -353,3 +353,37 @@
   - `flutter analyze` ✅ No issues found
   - `flutter test` ✅ 63 tests passed
 - **附带修复**: ISSUE-flutter-001 (widget_test.dart 引用旧 MyApp 类)
+
+---
+
+### 2026-02-21 - Bug 修复: Flutter 导航/断连/重入三项问题
+
+- **迭代**: Week 4 - 迭代 4.1 后续修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 修复 ScanPage 每次数据更新重复 push DevicePage 的问题（`_navigatedToDevice` 标记控制单次导航）
+  - 修复断开连接按钮未真正断开 BLE 的问题（重构 `BleManager.disconnect()` 消除竞态条件）
+  - DevicePage 断连时使用 `popUntil` 直达 `/scan` 页
+  - ScanPage 新增已连接设备可视化入口 Card，支持从主界面重新进入设备数据页
+  - BleProvider 新增 `connectedDeviceName` getter
+- **关键文件**:
+  - 修改: `mobile_flutter/lib/ui/scan_page.dart`, `mobile_flutter/lib/ui/device_page.dart`, `mobile_flutter/lib/ble/ble_manager.dart`, `mobile_flutter/lib/data/ble_provider.dart`
+- **验收状态**: 待验收
+  - `flutter analyze` ✅ No issues found
+- **附带修复**: ISSUE-flutter-002, ISSUE-flutter-003
+
+---
+
+### 2026-02-21 - Bug 修复: 连接过程瞬态断连事件导致 _device 被清空
+
+- **迭代**: Week 4 - 迭代 4.1 后续修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 添加 `_isConnecting` 标志，connect() 期间设为 true
+  - 连接监听器增加 `!_isConnecting` 条件，忽略配对过程中的瞬态断连事件
+  - 移除 disconnect() 中的 `setNotifyValue(false)` 调用，避免 GATT 写入阻塞 disconnect
+  - `_forceDisconnect()` 改为：先 disconnect 再 removeBond（避免 removeBond 触发假断连事件）
+- **关键文件**:
+  - 修改: `mobile_flutter/lib/ble/ble_manager.dart`
+- **验收状态**: 待验收
+- **附带修复**: ISSUE-flutter-009

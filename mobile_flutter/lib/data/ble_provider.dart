@@ -4,30 +4,28 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'models.dart';
 import '../ble/ble_manager.dart';
 
-/// BLE 状态管理 Provider
 class BleProvider extends ChangeNotifier {
   final BleManager _ble = BleManager.instance;
 
-  // Stream subscriptions
   StreamSubscription<BleConnectionState>? _connectionStateSub;
   StreamSubscription<List<ScanResult>>? _scanResultsSub;
   StreamSubscription<TelemetryData>? _telemetrySub;
   StreamSubscription<AlarmData>? _alarmSub;
 
-  // 状态
   BleConnectionState _connectionState = BleConnectionState.disconnected;
   List<ScanResult> _scanResults = [];
   TelemetryData? _latestTelemetry;
   AlarmData? _latestAlarm;
   String? _errorMessage;
+  String? _connectedDeviceName;
 
-  // Getters
   BleConnectionState get connectionState => _connectionState;
   List<ScanResult> get scanResults => _scanResults;
   TelemetryData? get latestTelemetry => _latestTelemetry;
   AlarmData? get latestAlarm => _latestAlarm;
   bool get isConnected => _connectionState == BleConnectionState.connected;
   String? get errorMessage => _errorMessage;
+  String? get connectedDeviceName => _connectedDeviceName;
 
   BleProvider() {
     _connectionStateSub = _ble.connectionStateStream.listen((state) {
@@ -36,6 +34,7 @@ class BleProvider extends ChangeNotifier {
         _latestTelemetry = null;
         _latestAlarm = null;
         _scanResults = [];
+        _connectedDeviceName = null;
       }
       notifyListeners();
     });
@@ -82,6 +81,7 @@ class BleProvider extends ChangeNotifier {
 
   Future<void> connectDevice(BluetoothDevice device) async {
     _errorMessage = null;
+    _connectedDeviceName = device.platformName;
     notifyListeners();
 
     try {
@@ -96,8 +96,11 @@ class BleProvider extends ChangeNotifier {
 
   Future<void> disconnect() async {
     try {
+      debugPrint('[BleProvider] disconnect requested, state=$_connectionState');
       await _ble.disconnect();
+      debugPrint('[BleProvider] disconnect done, state=$_connectionState');
     } catch (e) {
+      debugPrint('[BleProvider] disconnect failed: $e');
       _errorMessage = '断开连接失败: $e';
       notifyListeners();
     }
@@ -135,10 +138,7 @@ class BleProvider extends ChangeNotifier {
     int durationSec = 15,
   }) async {
     try {
-      await _ble.sendManualMeasure(
-        start: start,
-        durationSec: durationSec,
-      );
+      await _ble.sendManualMeasure(start: start, durationSec: durationSec);
     } catch (e) {
       _errorMessage = '手动测量失败: $e';
       notifyListeners();
