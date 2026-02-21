@@ -433,6 +433,9 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         s_connected = false;
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
+        /* 重置 nonce，允许新连接从 nonce=1 重新开始 */
+        ble_security_reset_nonce();
+
         /* 发布 BLE 断连事件到事件总线 */
         {
             event_data_t evt_data;

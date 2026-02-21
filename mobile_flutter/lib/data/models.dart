@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 /// BLE 连接状态枚举
 enum BleConnectionState {
   disconnected,
@@ -83,6 +85,119 @@ class AlarmData {
   @override
   String toString() =>
       'AlarmData(id=$eventId, type=$alarmType, value=$triggerValue, acked=$isAcked)';
+}
+
+/// AlarmType 扩展方法：显示名称、图标、颜色、格式化值、严重级别
+extension AlarmTypeExtension on AlarmType {
+  /// 报警类型的中文显示名
+  String get displayName {
+    switch (this) {
+      case AlarmType.none:
+        return '无';
+      case AlarmType.tempHigh:
+        return '环境温度过高';
+      case AlarmType.tempLow:
+        return '环境温度过低';
+      case AlarmType.heartRateHigh:
+        return '心率过高';
+      case AlarmType.heartRateLow:
+        return '心率过低';
+      case AlarmType.spo2Low:
+        return '血氧过低';
+      case AlarmType.fall:
+        return '疑似跌倒';
+      case AlarmType.manual:
+        return '手动报警';
+      case AlarmType.reserved:
+        return '保留';
+      case AlarmType.callFamily:
+        return '呼叫家人';
+    }
+  }
+
+  /// 报警对应的图标
+  IconData get icon {
+    switch (this) {
+      case AlarmType.tempHigh:
+      case AlarmType.tempLow:
+        return Icons.thermostat;
+      case AlarmType.heartRateHigh:
+      case AlarmType.heartRateLow:
+        return Icons.favorite;
+      case AlarmType.spo2Low:
+        return Icons.water_drop;
+      case AlarmType.fall:
+        return Icons.accessibility_new;
+      case AlarmType.manual:
+        return Icons.warning_amber_rounded;
+      case AlarmType.callFamily:
+        return Icons.phone_in_talk;
+      case AlarmType.none:
+      case AlarmType.reserved:
+        return Icons.info_outline;
+    }
+  }
+
+  /// 报警对应的颜色
+  Color get color {
+    switch (this) {
+      case AlarmType.tempHigh:
+      case AlarmType.tempLow:
+        return const Color(0xFFF4A261);
+      case AlarmType.heartRateHigh:
+      case AlarmType.heartRateLow:
+        return const Color(0xFFE63946);
+      case AlarmType.spo2Low:
+        return const Color(0xFF457B9D);
+      case AlarmType.fall:
+      case AlarmType.manual:
+        return const Color(0xFFE63946);
+      case AlarmType.callFamily:
+        return const Color(0xFF2D7DD2);
+      case AlarmType.none:
+      case AlarmType.reserved:
+        return const Color(0xFF6C757D);
+    }
+  }
+
+  /// 报警触发值的格式化字符串
+  String formatValue(double value) {
+    switch (this) {
+      case AlarmType.tempHigh:
+      case AlarmType.tempLow:
+        return '${value.toStringAsFixed(1)}°C';
+      case AlarmType.heartRateHigh:
+      case AlarmType.heartRateLow:
+        return '${value.toInt()} bpm';
+      case AlarmType.spo2Low:
+        return '${value.toInt()}%';
+      case AlarmType.fall:
+      case AlarmType.manual:
+      case AlarmType.callFamily:
+      case AlarmType.none:
+      case AlarmType.reserved:
+        return '--';
+    }
+  }
+
+  /// 报警严重级别: 0=info, 1=warning, 2=critical
+  int get severity {
+    switch (this) {
+      case AlarmType.none:
+      case AlarmType.reserved:
+        return 0;
+      case AlarmType.tempHigh:
+      case AlarmType.tempLow:
+      case AlarmType.callFamily:
+        return 1;
+      case AlarmType.heartRateHigh:
+      case AlarmType.heartRateLow:
+      case AlarmType.spo2Low:
+      case AlarmType.fall:
+      case AlarmType.manual:
+        return 2;
+    }
+  }
 }
 
 /// 设备状态（对应 BLE Status 特征 FF04, 3 bytes）

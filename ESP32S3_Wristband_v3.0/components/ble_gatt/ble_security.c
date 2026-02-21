@@ -47,6 +47,12 @@ bool ble_security_validate_nonce(uint32_t nonce)
     return true;
 }
 
+void ble_security_reset_nonce(void)
+{
+    s_last_nonce = 0;
+    ESP_LOGI(TAG, "Nonce reset");
+}
+
 bool ble_security_is_encrypted(uint16_t conn_handle)
 {
     struct ble_gap_conn_desc desc;
