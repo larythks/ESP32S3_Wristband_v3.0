@@ -330,63 +330,30 @@
 
 ---
 
-### 2026-02-20 - 迭代 4.1: Flutter 项目搭建 + BLE 连接
+### 2026-02-20~21 - 迭代 4.1: Flutter 项目搭建 + BLE 连接
 
 - **迭代**: Week 4 - 迭代 4.1
 - **状态**: ✅ 已完成
 - **主要改动**:
   - 项目基础配置: pubspec.yaml 添加 flutter_blue_plus/provider/permission_handler/intl 依赖
   - Android 配置: minSdk=23, applicationId=com.careband.app, BLE/定位权限声明
-  - 数据模型: BleConnectionState 枚举, AlarmType 枚举(0~9), TelemetryData/AlarmData/DeviceStatus 数据类
-  - BLE 通信层: 单例 BleManager (扫描/连接/GATT发现/Notify订阅/命令发送), BleParser (二进制解析 Telemetry 20B/Alarm 16B/Status 3B), BleCommand (ACK 9B/SYNC_TIME 9B/REQUEST_REPORT 5B/MANUAL_MEASURE 7B + nonce 递增)
-  - 状态管理: BleProvider (ChangeNotifier) 封装 BleManager streams, 暴露 startScan/connectDevice/disconnect/ackAlarm/syncTime 等方法
-  - UI 页面: ScanPage (权限检查+CareBand 过滤+自动跳转), DevicePage (卡片式 Telemetry 显示+断连自动返回+Alarm SnackBar), DeviceTile (设备名/MAC/RSSI 信号图标)
-  - 单元测试: 63 个测试全部通过 (ble_parser_test 18 个, ble_command_test 20 个, models_test 24 个, widget_test 1 个)
-  - data_valid bitmap 与固件对齐: HR 和 SpO2 共用 bit 1 (0x02), 非独立 bit
-- **关键文件**:
-  - 修改: `mobile_flutter/pubspec.yaml`, `mobile_flutter/android/app/build.gradle.kts`, `mobile_flutter/android/app/src/main/AndroidManifest.xml`
-  - 新建: `mobile_flutter/lib/data/models.dart`, `mobile_flutter/lib/data/ble_provider.dart`, `mobile_flutter/lib/ble/ble_manager.dart`, `mobile_flutter/lib/ble/ble_parser.dart`, `mobile_flutter/lib/ble/ble_command.dart`, `mobile_flutter/lib/ui/scan_page.dart`, `mobile_flutter/lib/ui/device_page.dart`, `mobile_flutter/lib/ui/widgets/device_tile.dart`
-  - 重写: `mobile_flutter/lib/main.dart`
-  - 测试: `mobile_flutter/test/ble_parser_test.dart`, `mobile_flutter/test/ble_command_test.dart`, `mobile_flutter/test/models_test.dart`, `mobile_flutter/test/widget_test.dart`
+  - 数据模型: BleConnectionState/AlarmType 枚举, TelemetryData/AlarmData/DeviceStatus 数据类
+  - BLE 通信层: 单例 BleManager (扫描/连接/GATT/Notify/命令), BleParser (二进制解析 Telemetry 20B/Alarm 16B/Status 3B), BleCommand (ACK/SYNC_TIME/REQUEST_REPORT/MANUAL_MEASURE + nonce 递增)
+  - 状态管理: BleProvider (ChangeNotifier) 封装 BleManager streams
+  - UI 页面: ScanPage (权限检查+CareBand 过滤+自动跳转+已连接设备入口), DevicePage (卡片式 Telemetry+断连自动返回), DeviceTile
+  - Android 前台服务 BleKeepAliveService 保活 BLE 连接，防止系统回收进程
+  - ScanPage 返回键改为 moveTaskToBack，退到后台而非销毁 Activity
+  - 单元测试: 63 个测试全部通过
+- **关键文件**: mobile_flutter/lib/ble/, mobile_flutter/lib/data/, mobile_flutter/lib/ui/, mobile_flutter/android/app/src/main/kotlin/com/careband/app/
 - **验收状态**: ✅ 已验收
-  - `flutter pub get` ✅ 无错误
-  - `flutter analyze` ✅ No issues found
-  - `flutter test` ✅ 63 tests passed
-- **附带修复**: ISSUE-flutter-001 (widget_test.dart 引用旧 MyApp 类)
-
----
-
-### 2026-02-21 - Bug 修复: Flutter 导航/断连/重入三项问题
-
-- **迭代**: Week 4 - 迭代 4.1 后续修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - 修复 ScanPage 每次数据更新重复 push DevicePage 的问题（`_navigatedToDevice` 标记控制单次导航）
-  - 修复断开连接按钮未真正断开 BLE 的问题（重构 `BleManager.disconnect()` 消除竞态条件）
-  - DevicePage 断连时使用 `popUntil` 直达 `/scan` 页
-  - ScanPage 新增已连接设备可视化入口 Card，支持从主界面重新进入设备数据页
-  - BleProvider 新增 `connectedDeviceName` getter
-- **关键文件**:
-  - 修改: `mobile_flutter/lib/ui/scan_page.dart`, `mobile_flutter/lib/ui/device_page.dart`, `mobile_flutter/lib/ble/ble_manager.dart`, `mobile_flutter/lib/data/ble_provider.dart`
-- **验收状态**: 待验收
-  - `flutter analyze` ✅ No issues found
-- **附带修复**: ISSUE-flutter-002, ISSUE-flutter-003
-
----
-
-### 2026-02-21 - Bug 修复: 连接过程瞬态断连事件导致 _device 被清空
-
-- **迭代**: Week 4 - 迭代 4.1 后续修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - 添加 `_isConnecting` 标志，connect() 期间设为 true
-  - 连接监听器增加 `!_isConnecting` 条件，忽略配对过程中的瞬态断连事件
-  - 移除 disconnect() 中的 `setNotifyValue(false)` 调用，避免 GATT 写入阻塞 disconnect
-  - `_forceDisconnect()` 改为：先 disconnect 再 removeBond（避免 removeBond 触发假断连事件）
-- **关键文件**:
-  - 修改: `mobile_flutter/lib/ble/ble_manager.dart`
-- **验收状态**: 待验收
-- **附带修复**: ISSUE-flutter-009
+  - `flutter pub get` ✅ | `flutter analyze` ✅ | `flutter test` ✅ 63 tests passed
+- **附带修复**:
+  - ISSUE-flutter-001: widget_test.dart 引用旧 MyApp 类
+  - ISSUE-flutter-002: ScanPage 每次数据更新重复 push DevicePage
+  - ISSUE-flutter-003: 断开连接按钮未真正断开 BLE（重构 disconnect() 消除竞态）
+  - ISSUE-flutter-004: 连接过程瞬态断连事件导致 _device 被清空（添加 _isConnecting 标志）
+  - ISSUE-flutter-007: ScanPage 返回后显示旧扫描结果
+  - ISSUE-flutter-009: 后台 BLE 连接被系统回收（前台服务保活）
 
 ---
 
@@ -395,95 +362,19 @@
 - **迭代**: Week 4 - 迭代 4.2
 - **状态**: ✅ 已完成
 - **主要改动**:
-  - 设计系统: 主题色 (信赖蓝 #2D7DD2)、品牌色 (温度橙/心率红/血氧蓝/步数绿)、Material 3 CardThemeData + NavigationBar
+  - 设计系统: 主题色 (信赖蓝 #2D7DD2)、品牌色、Material 3 CardThemeData + NavigationBar
   - DevicePage 重写为三 Tab 导航壳 (IndexedStack): 数据面板 / 报警记录 / 设置
-  - 报警弹窗从 SnackBar 升级为标准 AlertDialog (AlarmDialog)，含图标/类型名/触发值/ACK 按钮
-  - DashboardTab: 2×2 健康数据卡片网格 + fl_chart 趋势折线图 (心率/血氧/温度切换) + 手动测量按钮 (15s 倒计时)
+  - DashboardTab: 2×2 健康数据卡片 + fl_chart 趋势折线图 (心率/血氧/温度切换) + 手动测量按钮 (15s 倒计时)
   - AlarmTab: 报警历史列表 (倒序)，未确认项红色左边框 + ACK 按钮
-  - SettingsTab: 设备信息卡、同步时间/请求上报操作、断开连接按钮、版本号
-  - BleProvider 新增 telemetryHistory (max 30) / alarmHistory (max 50) 内存历史记录
-  - AlarmTypeExtension: displayName/icon/color/formatValue/severity 扩展方法
-  - DataRepository 抽象接口 + InMemoryDataRepository (为 4.3 MQTT 预留)
-  - pubspec.yaml 新增 fl_chart ^0.70.0
-- **关键文件**:
-  - 修改: `mobile_flutter/pubspec.yaml`, `mobile_flutter/lib/main.dart`, `mobile_flutter/lib/data/models.dart`, `mobile_flutter/lib/data/ble_provider.dart`
-  - 重写: `mobile_flutter/lib/ui/device_page.dart`
-  - 新建: `mobile_flutter/lib/data/data_repository.dart`, `mobile_flutter/lib/ui/tabs/dashboard_tab.dart`, `mobile_flutter/lib/ui/tabs/alarm_tab.dart`, `mobile_flutter/lib/ui/tabs/settings_tab.dart`, `mobile_flutter/lib/ui/widgets/health_card.dart`, `mobile_flutter/lib/ui/widgets/trend_chart.dart`, `mobile_flutter/lib/ui/widgets/alarm_dialog.dart`
+  - SettingsTab: 设备信息卡、同步时间/请求上报、断开连接、版本号
+  - 报警弹窗升级为 AlertDialog (AlarmDialog)，含图标/类型名/触发值/ACK 按钮，Set 追踪防重复弹出
+  - BleProvider 新增 telemetryHistory (max 30) / alarmHistory (max 50)
+  - DataRepository 抽象接口 + InMemoryDataRepository（为 4.3 MQTT 预留）
+- **关键文件**: mobile_flutter/lib/ui/tabs/, mobile_flutter/lib/ui/widgets/, mobile_flutter/lib/data/data_repository.dart, mobile_flutter/lib/ui/device_page.dart
 - **验收状态**: 待验收
-  - `flutter pub get` ✅ 无错误
-  - `flutter analyze` ✅ 仅 2 个预存 ble_manager.dart 警告 (unused_field)，新代码 0 issues
-  - `flutter test` ✅ 63 tests passed
-- **附带修复**: ISSUE-flutter-010 (CardTheme→CardThemeData), ISSUE-flutter-011 (unused import), ISSUE-flutter-012 (unnecessary non-null assertion)
-
----
-
-### 2026-02-21 - Bug 修复: ScanPage 返回后显示旧扫描结果
-
-- **迭代**: Week 4 - 迭代 4.1 后续修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - `BleProvider.connectDevice()` 中连接时清空 `_scanResults`，防止返回 ScanPage 时同时显示已连接设备卡片和旧扫描设备列表
-- **关键文件**:
-  - 修改: `mobile_flutter/lib/data/ble_provider.dart`
-- **验收状态**: 待验收
-- **附带修复**: ISSUE-flutter-013
-
----
-
-### 2026-02-21 - Bug 修复: 已连接时扫描异常 + 返回键退出 App
-
-- **迭代**: Week 4 - 迭代 4.1 后续修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - 修复已连接时点击搜索按钮出现错误消息和旧扫描结果的问题：`startScan()` 订阅移到 `_ble.startScan()` 成功后，catch 中清理订阅；ScanPage 已连接时隐藏扫描按钮
-  - 修复 ScanPage 按返回键直接退出 App 导致 BLE 断连：`PopScope` 拦截返回键，`SystemNavigator.pop()` 最小化至后台
-- **关键文件**:
-  - 修改: `mobile_flutter/lib/data/ble_provider.dart`, `mobile_flutter/lib/ui/scan_page.dart`
-- **验收状态**: 待验收
-- **附带修复**: ISSUE-flutter-014, ISSUE-flutter-015
-
----
-
-### 2026-02-21 - Bug 修复: 报警确认后 UI 未更新
-
-- **迭代**: Week 4 - 迭代 4.2 后续修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - `BleProvider.ackAlarm()` 发送 ACK 命令成功后，更新本地 `_alarmHistory` 中对应报警的 `isAcked` 状态并调用 `notifyListeners()` 刷新 UI
-- **关键文件**:
-  - 修改: `mobile_flutter/lib/data/ble_provider.dart`
-- **验收状态**: 待验收
-- **附带修复**: ISSUE-flutter-016
-
----
-
-### 2026-02-21 - 前台服务保活 BLE 连接
-
-- **迭代**: Week 4 - 迭代 4.1 后续修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - 新建 `BleKeepAliveService` Android 前台服务，BLE 连接时显示通知栏常驻通知（"蓝牙连接中"），防止系统回收进程
-  - `MainActivity` 添加 MethodChannel (`com.careband.app/platform`)，提供 `moveTaskToBack`/`startBleService`/`stopBleService` 三个方法
-  - `scan_page.dart` 返回键从 `SystemNavigator.pop()` 改为 `moveTaskToBack`，退到后台而非销毁 Activity
-  - `BleProvider` 连接成功时自动启动前台服务，断开时自动停止
-  - AndroidManifest 添加 `FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_CONNECTED_DEVICE`/`POST_NOTIFICATIONS` 权限，声明 `BleKeepAliveService`
-- **关键文件**:
-  - 新建: `mobile_flutter/android/app/src/main/kotlin/com/careband/app/BleKeepAliveService.kt`
-  - 修改: `mobile_flutter/android/app/src/main/kotlin/com/careband/app/MainActivity.kt`, `mobile_flutter/android/app/src/main/AndroidManifest.xml`, `mobile_flutter/lib/ui/scan_page.dart`, `mobile_flutter/lib/data/ble_provider.dart`
-- **验收状态**: 待验收
-- **附带修复**: ISSUE-flutter-017
-
----
-
-### 2026-02-21 - Bug 修复: 报警弹窗重复弹出已确认报警
-
-- **迭代**: Week 4 - 迭代 4.2 后续修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - 重写 DevicePage 报警弹窗逻辑：用 `Set<int> _shownAlarmIds` 追踪已弹过的 eventId，用 `_isShowingDialog` 防止并发弹窗
-  - `_showNextUnackedAlarm()` 仅弹出未确认且未弹过的报警，弹窗关闭后递归弹下一条
-  - 重新进入 DevicePage 时只弹出所有未确认报警，已确认的不再弹出
-- **关键文件**:
-  - 修改: `mobile_flutter/lib/ui/device_page.dart`
-- **验收状态**: 待验收
-- **附带修复**: ISSUE-flutter-018
+  - `flutter pub get` ✅ | `flutter analyze` ✅ | `flutter test` ✅ 63 tests passed
+- **附带修复**:
+  - ISSUE-flutter-005: CardTheme→CardThemeData
+  - ISSUE-flutter-006: unnecessary non-null assertion
+  - ISSUE-flutter-008: 报警确认后 UI 未更新（ackAlarm 成功后更新本地 isAcked + notifyListeners）
+  - ISSUE-flutter-010: 报警弹窗重复弹出已确认报警（Set<int> _shownAlarmIds 追踪）
