@@ -104,6 +104,14 @@ static bool temp_read_result(void)
     esp_err_t ret = ds18b20_read_scratchpad(&temp);
 
     if (ret == ESP_OK) {
+        // 异常数据丢弃：温度超出合理范围时不更新，等待重新采样
+        if (temp < -30.0f || temp > 50.0f) {
+            ESP_LOGW(TAG, "Temp out of range: %.2f°C, discarding", temp);
+            s_ctx.temp_state = TEMP_STATE_IDLE;
+            s_ctx.temp_last_sample = 0;  // 立即触发重新采样
+            return false;
+        }
+
         xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
         s_ctx.latest_data.temperature = temp;
         s_ctx.latest_data.data_valid |= SENSOR_TEMP;

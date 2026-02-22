@@ -306,18 +306,30 @@ static void on_sensor_data(const event_t *event, void *user_data)
                 uint8_t spo2 = calculate_spo2();
 
                 if (hr > 0) {
-                    s_ctx.status.heart_rate = hr;
-                    s_ctx.status.hr_validity = MEASURE_VALID;
-                    ESP_LOGI(TAG, "Window HR result: %d bpm", hr);
+                    // 异常数据丢弃：HR 超出 20-200 范围不上报
+                    if (hr < 20 || hr > 200) {
+                        s_ctx.status.hr_validity = MEASURE_INVALID_NO_SIGNAL;
+                        ESP_LOGW(TAG, "HR out of range: %d bpm, discarding", hr);
+                    } else {
+                        s_ctx.status.heart_rate = hr;
+                        s_ctx.status.hr_validity = MEASURE_VALID;
+                        ESP_LOGI(TAG, "Window HR result: %d bpm", hr);
+                    }
                 } else {
                     s_ctx.status.hr_validity = MEASURE_INVALID_NO_SIGNAL;
                     ESP_LOGW(TAG, "Window HR: no valid result");
                 }
 
                 if (spo2 > 0) {
-                    s_ctx.status.spo2 = spo2;
-                    s_ctx.status.spo2_validity = MEASURE_VALID;
-                    ESP_LOGI(TAG, "Window SpO2 result: %d%%", spo2);
+                    // 异常数据丢弃：SpO2 低于 70% 不上报
+                    if (spo2 < 70) {
+                        s_ctx.status.spo2_validity = MEASURE_INVALID_NO_SIGNAL;
+                        ESP_LOGW(TAG, "SpO2 out of range: %d%%, discarding", spo2);
+                    } else {
+                        s_ctx.status.spo2 = spo2;
+                        s_ctx.status.spo2_validity = MEASURE_VALID;
+                        ESP_LOGI(TAG, "Window SpO2 result: %d%%", spo2);
+                    }
                 } else {
                     s_ctx.status.spo2_validity = MEASURE_INVALID_NO_SIGNAL;
                     ESP_LOGW(TAG, "Window SpO2: no valid result");

@@ -440,3 +440,16 @@
 - **关键文件**: mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/tabs/dashboard_tab.dart, mobile_flutter/lib/ui/scan_page.dart
 - **验收状态**: 待验收
 - **附带修复**: ISSUE-flutter-012, ISSUE-flutter-013, ISSUE-flutter-014
+
+---
+
+### 2026-02-22 - 趋势图轴标签重叠修复
+
+- **迭代**: Week 4 - 迭代 4.2 Bug 修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - Y 轴添加显式 interval 与网格线间距对齐，过滤边界过近标签
+  - X 轴标签间隔分级细化，数据量大时自动拉大间距
+- **关键文件**: mobile_flutter/lib/ui/widgets/trend_chart.dart
+- **验收状态**: 待验收
+- **附带修复**: ISSUE-flutter-016

@@ -1286,3 +1286,42 @@ if (++temp_refresh_counter >= temp_refresh_cycles) {
 **涉及文件**：
 - `components/services/health_monitor/health_monitor.c`
 - `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-047：传感器异常数据未过滤，直接参与事件发布和 BLE 上报
+
+**发现日期**：2026-02-22
+
+**原因**：
+传感器采样层（`sensor_service.c`）和健康监测层（`health_monitor.c`）缺少对明显异常数据的丢弃机制。当传感器硬件故障、接触不良或极端环境干扰时，采集到的异常数据会直接写入 `latest_data`、通过事件总线发布、最终经 BLE Telemetry 上报给手机端。
+
+具体缺失的校验：
+1. **DS18B20 温度**：无范围校验，异常值（如断线返回 85°C 或 -127°C）直接存入
+4. **MAX30102 心率/血氧**：计算结果缺少最终范围校验的防御层
+
+**后果**：
+- 手机端收到明显不合理的传感器数据（如体温 85°C、心率 5 bpm）
+- 异常加速度数据可能触发误报跌倒检测
+- 用户对设备数据可信度产生质疑
+
+**解决方案**：
+
+1. **DS18B20 温度异常丢弃**（`sensor_service.c:temp_read_result()`）：
+   读取温度后检查 `temp < -30°C || temp > 50°C`，异常时不更新 `latest_data`，重置 `temp_last_sample = 0` 立即触发重新采样。
+
+```c
+if (temp < -30.0f || temp > 50.0f) {
+    ESP_LOGW(TAG, "Temp out of range: %.2f°C, discarding", temp);
+    s_ctx.temp_state = TEMP_STATE_IDLE;
+    s_ctx.temp_last_sample = 0;
+    return false;
+}
+```
+
+2. **心率/血氧异常丢弃**（`health_monitor.c:on_sensor_data()`）：
+   计算结果 HR < 20 或 > 200 时标记为 `MEASURE_INVALID_NO_SIGNAL` 不存入；SpO2 < 70% 时同理。
+
+**涉及文件**：
+- `components/services/sensor_service/sensor_service.c`
+- `components/services/health_monitor/health_monitor.c`

@@ -134,3 +134,11 @@
 - **后果**: 数据保留范围为滑动的 24 小时窗口，而非自然日（当天 00:00~23:59），与预期的"只保存当天数据"不一致
 - **解决方案**: 将 `cleanup24h()` 重命名为 `cleanupBeforeToday()`，cutoff 从 `now - 24h` 改为 `DateTime(now.year, now.month, now.day)` 即当天零点，删除零点之前的所有记录
 - **涉及文件**: `lib/data/database_helper.dart`, `lib/data/sqlite_repository.dart`
+
+---
+### ISSUE-016
+- **发现日期**: 2026-02-22
+- **原因**: `TrendChart` 的 Y 轴 `SideTitles` 未设置 `interval`，fl_chart 自动生成刻度标签间距过密；X 轴 `_xLabelInterval` 分级不足，数据点多时标签间距仍不够
+- **后果**: 当数据值接近时（如体温 36.5~36.8），Y 轴标签数值重叠无法辨认；X 轴数据量大时时间标签互相遮挡
+- **解决方案**: (1) Y 轴 `SideTitles` 添加 `interval: _gridInterval(minY, maxY)` 使标签间距与网格线一致；(2) Y 轴 `getTitlesWidget` 中过滤与边界距离小于 `interval * 0.4` 的标签，防止边界值与刻度挤在一起；(3) X 轴 `_xLabelInterval` 增加更多分级（count≤12→2, ≤20→4, ≤40→8, >40→10）
+- **涉及文件**: `lib/ui/widgets/trend_chart.dart`

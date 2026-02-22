@@ -157,7 +157,17 @@ class TrendChart extends StatelessWidget {
               sideTitles: SideTitles(
                 showTitles: true,
                 reservedSize: 42,
+                interval: _gridInterval(minY, maxY),
                 getTitlesWidget: (value, meta) {
+                  // 过滤掉与边界过近的标签，避免重叠
+                  final interval = _gridInterval(minY, maxY);
+                  final threshold = interval * 0.4;
+                  if ((value - minY).abs() < threshold && value != minY) {
+                    return const SizedBox.shrink();
+                  }
+                  if ((value - maxY).abs() < threshold && value != maxY) {
+                    return const SizedBox.shrink();
+                  }
                   return Text(
                     selectedMetric == TrendMetric.temperature
                         ? value.toStringAsFixed(1)
@@ -222,7 +232,9 @@ class TrendChart extends StatelessWidget {
 
   double _xLabelInterval(int count) {
     if (count <= 6) return 1;
-    if (count <= 15) return 3;
-    return 5;
+    if (count <= 12) return 2;
+    if (count <= 20) return 4;
+    if (count <= 40) return 8;
+    return 10;
   }
 }
