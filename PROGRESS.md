@@ -24,7 +24,7 @@
 | Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | ✅ 已完成 | 2026-02-20 |
 | Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | ✅ 已完成 | 2026-02-21 |
 | Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | ✅ 已完成 | 2026-02-21 |
-| Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | 🔲 待开始 | - |
+| Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | ✅ 已完成 | 2026-02-22 |
 
 ## 详细记录
 
@@ -357,27 +357,20 @@
 
 ---
 
-### 2026-02-21 - 迭代 4.2: 数据展示 UI + 报警 UI
+### 2026-02-21~22 - 迭代 4.2: 数据展示 UI + 报警 UI + 本地存储 + 通知
 
 - **迭代**: Week 4 - 迭代 4.2
 - **状态**: ✅ 已完成
 - **主要改动**:
-  - 设计系统: 主题色 (信赖蓝 #2D7DD2)、品牌色、Material 3 CardThemeData + NavigationBar
-  - DevicePage 重写为三 Tab 导航壳 (IndexedStack): 数据面板 / 报警记录 / 设置
-  - DashboardTab: 2×2 健康数据卡片 + fl_chart 趋势折线图 (心率/血氧/温度切换) + 手动测量按钮 (15s 倒计时)
-  - AlarmTab: 报警历史列表 (倒序)，未确认项红色左边框 + ACK 按钮
-  - SettingsTab: 设备信息卡、同步时间/请求上报、断开连接、版本号
-  - 报警弹窗升级为 AlertDialog (AlarmDialog)，含图标/类型名/触发值/ACK 按钮，Set 追踪防重复弹出
-  - BleProvider 新增 telemetryHistory (max 30) / alarmHistory (max 50)
-  - DataRepository 抽象接口 + InMemoryDataRepository（为 4.3 MQTT 预留）
-- **关键文件**: mobile_flutter/lib/ui/tabs/, mobile_flutter/lib/ui/widgets/, mobile_flutter/lib/data/data_repository.dart, mobile_flutter/lib/ui/device_page.dart
-- **验收状态**: ✅ 已验收
-  - `flutter pub get` ✅ | `flutter analyze` ✅ | `flutter test` ✅ 63 tests passed
-- **附带修复**:
-  - ISSUE-flutter-005: CardTheme→CardThemeData
-  - ISSUE-flutter-006: unnecessary non-null assertion
-  - ISSUE-flutter-008: 报警确认后 UI 未更新（ackAlarm 成功后更新本地 isAcked + notifyListeners）
-  - ISSUE-flutter-010: 报警弹窗重复弹出已确认报警（Set<int> _shownAlarmIds 追踪）
+  - Material 3 主题（信赖蓝 #2D7DD2）、三 Tab 导航（数据面板 / 报警记录 / 设置）
+  - DashboardTab: 2×2 健康数据卡片 + fl_chart 趋势折线图 + 手动测量按钮（15s 倒计时）
+  - AlarmTab: 报警历史列表（倒序）+ ACK 按钮 + AlertDialog 弹窗（Set 防重复弹出）
+  - SettingsTab: 设备信息卡、同步时间/请求上报、断开连接
+  - SQLite 本地持久化：telemetry + alarm 两表，24h 自动清理，断连不清空历史
+  - Android 报警通知：后台触发系统通知，点击跳转 AlarmTab
+  - 连接后自动请求上报，手动测量结束后自动上报
+- **关键文件**: mobile_flutter/lib/ui/tabs/, mobile_flutter/lib/ui/widgets/, mobile_flutter/lib/data/, mobile_flutter/lib/services/notification_service.dart
+- **附带修复**: ISSUE-flutter-005~006, ISSUE-flutter-008, ISSUE-flutter-010, ISSUE-flutter-012~014, ISSUE-flutter-016
 
 ---
 
@@ -386,70 +379,21 @@
 - **迭代**: Week 4 - 迭代 4.3
 - **状态**: ✅ 已完成
 - **主要改动**:
-  - MqttConfig 常量类：broker/port/username/password/deviceId/clientId + 5 个 Topic getter
-  - MqttGateway 单例核心：TLS 连接（CA 证书 rootBundle 加载）、LWT 遗嘱消息、指数退避断线重连（2s→30s max）
-  - 上行转发：Telemetry→JSON QoS0、Alarm→JSON QoS1（alarm_type 枚举→字符串映射）
-  - 下行命令：订阅 cmd topic，解析 JSON 后调用 BleManager 对应方法（ack_alarm/sync_time/request_report/manual_measure）
-  - 在线状态：连接成功发布 online status（retained），主动断开发布 offline status
-  - BleProvider 集成：BLE connected→启动 MQTT，BLE disconnected→停止 MQTT；telemetry/alarm 监听中同步转发
-  - SettingsTab 新增"云端连接"状态行（绿色已连接/红色未连接/灰色未启用）
-  - pubspec.yaml 添加 mqtt_client ^10.6.0 依赖 + CA 证书 asset 声明
-- **关键文件**: mobile_flutter/lib/mqtt/mqtt_config.dart, mobile_flutter/lib/mqtt/mqtt_gateway.dart, mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/tabs/settings_tab.dart, mobile_flutter/pubspec.yaml
-- **验收状态**: ✅ 已验收
-  - `flutter pub get` ✅ | `flutter analyze` ✅ (0 error, 3 pre-existing warnings) | `flutter test` ✅ 63 tests passed
-- **附带修复**:
-  - ISSUE-flutter-011: jsonEncode 异常杀死 Stream 监听器导致后续数据不再转发，整体 try-catch 保护 + 移除 logOnce 标志
+  - MqttGateway 单例：TLS 连接、LWT 遗嘱消息、指数退避断线重连（2s→30s max）
+  - 上行转发：Telemetry→JSON QoS0、Alarm→JSON QoS1
+  - 下行命令：订阅 cmd topic，解析 JSON 后调用 BleManager 对应方法
+  - BLE connected→启动 MQTT，disconnected→停止 MQTT
+  - SettingsTab 新增"云端连接"状态行
+- **关键文件**: mobile_flutter/lib/mqtt/, mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/tabs/settings_tab.dart
+- **附带修复**: ISSUE-flutter-011
 
 ---
 
-### 2026-02-21 - 迭代 4.2 增强: SQLite 本地存储 + Android 报警通知
+### 2026-02-22 - 迭代 4.4: 端到端联调 + 问题修复
 
-- **迭代**: Week 4 - 迭代 4.2 增强
+- **迭代**: Week 4 - 迭代 4.4
 - **状态**: ✅ 已完成
 - **主要改动**:
-  - **SQLite 本地存储**:
-    - DatabaseHelper 单例：careband.db，telemetry + alarm 两表 + 时间索引 + event_id 唯一约束
-    - SqliteDataRepository 实现 DataRepository 接口，包裹 DatabaseHelper CRUD
-    - 24h 自动清理：每 100 次 Telemetry 写入触发一次 cleanup
-    - BleProvider 集成：构造时异步加载历史（telemetry 360 条 / alarm 100 条），BLE 数据写入同步存库
-    - BLE 断连不再清空历史数据，ACK 操作同步更新 SQLite
-    - SQLite 初始化失败时自动降级为纯内存模式，不影响核心 BLE 功能
-  - **Android 报警通知**:
-    - NotificationService 单例：alarm_channel（Importance.high, 不震动），按 AlarmType 生成中文标题和正文
-    - BleProvider 添加 WidgetsBindingObserver 检测前后台状态，后台时触发系统通知
-    - 通知点击跳转：pendingTabIndex 机制 + navigatorKey 导航到 DevicePage AlarmTab
-    - ScanPage 追加 Permission.notification 运行时权限请求（Android 13+）
-  - DataRepository 接口新增 updateAlarmAcked 方法
-  - main.dart 添加 WidgetsFlutterBinding.ensureInitialized + NotificationService 初始化
-- **关键文件**:
-  - 新建: mobile_flutter/lib/data/database_helper.dart, mobile_flutter/lib/data/sqlite_repository.dart, mobile_flutter/lib/services/notification_service.dart
-  - 修改: mobile_flutter/pubspec.yaml, mobile_flutter/lib/main.dart, mobile_flutter/lib/data/data_repository.dart, mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/device_page.dart, mobile_flutter/lib/ui/scan_page.dart
-- **验收状态**: 待验收
-  - `flutter pub get` ✅ | `flutter analyze` ✅ (0 error, 3 pre-existing warnings) | `flutter test` ✅ 63 tests passed
-
----
-
-### 2026-02-22 - 迭代 4.2 Bug 修复: 自动上报 + 提示文字修正
-
-- **迭代**: Week 4 - 迭代 4.2 Bug 修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - 连接设备后自动请求上报数据（延迟 500ms 确保服务发现完成）
-  - 手动测量倒计时结束后自动请求上报最新测量数据
-  - ScanPage 已连接状态下空白区域提示从"点击搜索按钮开始扫描"改为"设备已连接"
-- **关键文件**: mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/tabs/dashboard_tab.dart, mobile_flutter/lib/ui/scan_page.dart
-- **验收状态**: 待验收
-- **附带修复**: ISSUE-flutter-012, ISSUE-flutter-013, ISSUE-flutter-014
-
----
-
-### 2026-02-22 - 趋势图轴标签重叠修复
-
-- **迭代**: Week 4 - 迭代 4.2 Bug 修复
-- **状态**: ✅ 已完成
-- **主要改动**:
-  - Y 轴添加显式 interval 与网格线间距对齐，过滤边界过近标签
-  - X 轴标签间隔分级细化，数据量大时自动拉大间距
-- **关键文件**: mobile_flutter/lib/ui/widgets/trend_chart.dart
-- **验收状态**: 待验收
-- **附带修复**: ISSUE-flutter-016
+  - ESP32 固件 ↔ Flutter App ↔ EMQX Cloud 全链路联调验证通过
+  - BLE 数据采集、Telemetry 上报、报警流程、MQTT 转发功能正常
+  - 所有迭代 4.x 功能验收通过
