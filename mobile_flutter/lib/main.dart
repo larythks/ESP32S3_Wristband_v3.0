@@ -9,7 +9,11 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.instance.init();
+  try {
+    await NotificationService.instance.init();
+  } catch (e) {
+    debugPrint('[main] NotificationService init failed: $e');
+  }
 
   // 通知点击回调：设置 pendingTabIndex 让 DevicePage 切换到 AlarmTab
   NotificationService.instance.onTap = (payload) {
@@ -18,11 +22,10 @@ void main() async {
       if (context != null) {
         final ble = Provider.of<BleProvider>(context, listen: false);
         ble.pendingTabIndex = 1;
-        // 如果当前不在 DevicePage，导航过去
+        // 回到已有的 DevicePage，不创建新实例
         if (ble.isConnected) {
-          navigatorKey.currentState?.pushNamedAndRemoveUntil(
-            '/device',
-            ModalRoute.withName('/scan'),
+          navigatorKey.currentState?.popUntil(
+            (route) => route.settings.name == '/device' || route.isFirst,
           );
         }
       }

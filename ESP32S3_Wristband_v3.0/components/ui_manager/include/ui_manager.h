@@ -9,6 +9,7 @@
 #define __UI_MANAGER_H__
 
 #include "esp_err.h"
+#include "ds3231.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -74,6 +75,17 @@ bool ui_is_manual_measuring(void);
  * @brief 更新 UI 显示
  */
 void ui_update(void);
+
+/**
+ * @brief 预填充 HOME 页 RTC 时间缓存
+ *
+ * 在 ui_manager_init() 之后、sensor_service 启动之前调用，
+ * 将 main 中已读取的 RTC 时间注入 UI 缓存，避免 UI 任务
+ * 启动后因 I2C 总线竞争而延迟数十秒才显示时间。
+ *
+ * @param time 已从 DS3231 读取的有效时间，不可为 NULL
+ */
+void ui_manager_set_rtc_cache(const ds3231_time_t *time);
 
 #ifdef __cplusplus
 }

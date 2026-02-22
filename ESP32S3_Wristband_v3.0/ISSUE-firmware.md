@@ -1325,3 +1325,74 @@ if (temp < -30.0f || temp > 50.0f) {
 **涉及文件**：
 - `components/services/sensor_service/sensor_service.c`
 - `components/services/health_monitor/health_monitor.c`
+
+---
+
+## ISSUE-048：BLE Telemetry 固定 120 秒周期上报与心率血氧采集周期不匹配
+
+**发现日期**：2026-02-22
+
+**原因**：
+BLE Telemetry 上报间隔固定为 120 秒（`BLE_TELEMETRY_INTERVAL_MS = 120000`），而心率血氧每 8 分钟才采集一次（15 秒窗口）。导致大部分上报时心率血氧数据尚未更新，传输的是旧数据或初始零值。同时 APP 端手动测量结束后立即发送 `REQUEST_REPORT` 命令，但此时 ESP32 可能尚未完成 HR/SpO2 计算，导致上报的仍是旧数据。
+
+**后果**：
+- 正常模式下绝大多数 Telemetry 包中的 HR/SpO2 数据不是最新的
+- 手动测量后 APP 立即请求上报，拿到的数据可能不包含本次测量结果
+- 浪费 BLE 传输带宽（大部分包无新 HR/SpO2 数据）
+
+**解决方案**：
+
+1. **事件驱动上报**：新增 `EVT_HR_RESULT_READY` 事件类型，`health_monitor` 在计算出有效数据（HR、SpO2、温度三者全部 `MEASURE_VALID`）后发布该事件，`ble_service` 订阅后唤醒 telemetry_task 立即上报。
+
+2. **正常模式改为纯事件驱动**：`s_telemetry_interval_ms` 初始值和正常模式下均设为 `portMAX_DELAY`，不再定期发送，仅在收到 `EVT_HR_RESULT_READY` 事件通知时才发送。
+
+3. **Flutter 端去除冗余请求**：删除 `dashboard_tab.dart` 中手动测量结束后的 `ble.requestReport()` 调用，避免重复发送。
+
+**涉及文件**：
+- `components/services/event_bus/include/event_bus.h`
+- `components/services/health_monitor/health_monitor.c`
+- `components/ble_gatt/ble_service.c`
+
+---
+
+## ISSUE-049：开机后 HOME 页需等待数十秒才能显示 DS3231 时间
+
+**发现日期**：2026-02-22
+
+**原因**：
+1. `main.c` 开机时成功读取了 DS3231 RTC 时间，但只打印日志，未传递给 UI 缓存（`s_home_cached_time_valid` 仍为 `false`）
+2. UI 任务中 `rtc_sync_counter` 初始值为 0，需累计 20 个循环（10 秒）才首次读取 RTC
+3. sensor_service 启动后 MPU6050/MAX30102 高频占用 I2C 总线，导致 DS3231 读取重试失败，进一步延长等待
+
+**后果**：用户开机后 HOME 页时间显示为空，需等待 10~30 秒才能看到时间，体验差。
+
+**解决方案**：
+- **方案 A**：新增 `ui_manager_set_rtc_cache()` 接口，在 `ui_manager_init()` 之后、`sensor_service_start()` 之前（I2C 总线空闲时），将 `main.c` 中已读取的 RTC 时间注入 UI 缓存
+- **方案 B**：将 `rtc_sync_counter` 初始值改为 `UI_HOME_RTC_SYNC_CYCLES - 1`（19），UI 任务首次循环即触发 RTC 读取
+
+```c
+// ui_manager.c - 新增接口
+void ui_manager_set_rtc_cache(const ds3231_time_t *time)
+{
+    if (time == NULL) return;
+    if (ui_lock(pdMS_TO_TICKS(50))) {
+        s_home_cached_time = *time;
+        s_home_cached_time_valid = true;
+        ui_unlock();
+    }
+}
+
+// main.c - 注入缓存
+if (rtc_valid) {
+    ui_manager_set_rtc_cache(&rtc_time);
+}
+
+// ui_manager.c - 计数器初始值
+uint8_t rtc_sync_counter = UI_HOME_RTC_SYNC_CYCLES - 1;
+```
+
+**涉及文件**：
+- `components/ui_manager/include/ui_manager.h`
+- `components/ui_manager/ui_manager.c`
+- `main/main.c`
+- `mobile_flutter/lib/ui/tabs/dashboard_tab.dart`

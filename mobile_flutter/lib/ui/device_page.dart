@@ -18,6 +18,7 @@ class _DevicePageState extends State<DevicePage> {
   int _currentIndex = 0;
   final Set<int> _shownAlarmIds = {};
   bool _isShowingDialog = false;
+  BleProvider? _bleRef;
 
   final List<Widget> _tabs = const [
     DashboardTab(),
@@ -28,22 +29,60 @@ class _DevicePageState extends State<DevicePage> {
   @override
   void initState() {
     super.initState();
-    // 通知点击跳转：检查 pendingTabIndex
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final ble = context.read<BleProvider>();
-      if (ble.pendingTabIndex != null) {
+      _bleRef = context.read<BleProvider>();
+
+      // 初始化：处理通知点击待跳转
+      if (_bleRef!.pendingTabIndex != null) {
         setState(() {
-          _currentIndex = ble.pendingTabIndex!;
+          _currentIndex = _bleRef!.pendingTabIndex!;
         });
-        ble.pendingTabIndex = null;
+        _bleRef!.pendingTabIndex = null;
       }
+
+      _bleRef!.addListener(_onProviderChanged);
+      // 初始检查未确认报警
+      _showNextUnackedAlarm();
     });
   }
 
-  void _showNextUnackedAlarm(BuildContext context, BleProvider ble) {
-    if (_isShowingDialog || !mounted) return;
+  @override
+  void dispose() {
+    _bleRef?.removeListener(_onProviderChanged);
+    super.dispose();
+  }
 
+  void _onProviderChanged() {
+    if (!mounted || _bleRef == null) return;
+
+    // 断连自动返回扫描页
+    if (_bleRef!.connectionState == BleConnectionState.disconnected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          Navigator.popUntil(context, ModalRoute.withName('/scan'));
+        }
+      });
+      return;
+    }
+
+    // 通知点击跳转
+    if (_bleRef!.pendingTabIndex != null) {
+      final idx = _bleRef!.pendingTabIndex!;
+      _bleRef!.pendingTabIndex = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _currentIndex = idx);
+      });
+    }
+
+    // 检查未确认报警弹窗
+    _showNextUnackedAlarm();
+  }
+
+  void _showNextUnackedAlarm() {
+    if (_isShowingDialog || !mounted || _bleRef == null) return;
+
+    final ble = _bleRef!;
     final alarm = ble.alarmHistory.cast<AlarmData?>().firstWhere(
       (a) => !a!.isAcked && !_shownAlarmIds.contains(a.eventId),
       orElse: () => null,
@@ -61,74 +100,49 @@ class _DevicePageState extends State<DevicePage> {
       showDialog(
         context: context,
         barrierDismissible: true,
-        builder: (_) => AlarmDialog(
+        builder: (dialogContext) => AlarmDialog(
           alarm: alarm,
           onAck: () {
             ble.ackAlarm(alarm.eventId);
-            Navigator.of(context).pop();
+            Navigator.of(dialogContext).pop();
           },
-          onDismiss: () => Navigator.of(context).pop(),
+          onDismiss: () => Navigator.of(dialogContext).pop(),
         ),
       ).then((_) {
         _isShowingDialog = false;
-        _showNextUnackedAlarm(context, ble);
+        _showNextUnackedAlarm();
       });
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<BleProvider>(
-      builder: (context, ble, child) {
-        // 断连自动返回扫描页（设置页断开连接 或 外部断连时触发）
-        if (ble.connectionState == BleConnectionState.disconnected) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              Navigator.popUntil(context, ModalRoute.withName('/scan'));
-            }
-          });
-        }
-
-        // 报警弹窗触发：仅弹出未确认的报警
-        _showNextUnackedAlarm(context, ble);
-
-        // 通知点击跳转
-        if (ble.pendingTabIndex != null) {
-          final idx = ble.pendingTabIndex!;
-          ble.pendingTabIndex = null;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _currentIndex = idx);
-          });
-        }
-
-        return Scaffold(
-          body: IndexedStack(
-            index: _currentIndex,
-            children: _tabs,
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _tabs,
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex,
+        onDestinationSelected: (i) => setState(() => _currentIndex = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: '数据',
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _currentIndex,
-            onDestinationSelected: (i) => setState(() => _currentIndex = i),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.dashboard_outlined),
-                selectedIcon: Icon(Icons.dashboard),
-                label: '数据',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.warning_amber_outlined),
-                selectedIcon: Icon(Icons.warning_amber_rounded),
-                label: '报警',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
-                label: '设置',
-              ),
-            ],
+          NavigationDestination(
+            icon: Icon(Icons.warning_amber_outlined),
+            selectedIcon: Icon(Icons.warning_amber_rounded),
+            label: '报警',
           ),
-        );
-      },
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: '设置',
+          ),
+        ],
+      ),
     );
   }
 }

@@ -41,6 +41,7 @@ typedef enum {
     EVT_BUTTON,             // 按键事件
     EVT_BLE_CONN,           // BLE 连接状态
     EVT_SAMPLING_MODE,      // 采样模式变更
+    EVT_HR_RESULT_READY,    // HR/SpO2 测量完成且数据全部有效，触发 BLE 上报
     EVT_TYPE_MAX            // 事件类型数量
 } event_type_t;
 

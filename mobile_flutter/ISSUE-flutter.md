@@ -142,3 +142,19 @@
 - **后果**: 当数据值接近时（如体温 36.5~36.8），Y 轴标签数值重叠无法辨认；X 轴数据量大时时间标签互相遮挡
 - **解决方案**: (1) Y 轴 `SideTitles` 添加 `interval: _gridInterval(minY, maxY)` 使标签间距与网格线一致；(2) Y 轴 `getTitlesWidget` 中过滤与边界距离小于 `interval * 0.4` 的标签，防止边界值与刻度挤在一起；(3) X 轴 `_xLabelInterval` 增加更多分级（count≤12→2, ≤20→4, ≤40→8, >40→10）
 - **涉及文件**: `lib/ui/widgets/trend_chart.dart`
+
+---
+### ISSUE-017
+- **发现日期**: 2026-02-22
+- **原因**: 通知点击回调中使用 `pushNamedAndRemoveUntil('/device', ...)` 创建新的 DevicePage 实例，旧 DevicePage 在退场动画期间仍处于 mounted 状态。新旧两个 DevicePage 的 `_shownAlarmIds` 独立（新实例为空集），导致双方各自为同一条未确认报警弹出 showDialog，形成两层叠加弹窗。顶层弹窗的 `onAck`/`onDismiss` 回调捕获了旧 DevicePage 的 Consumer `context`（已脱离有效导航树），`Navigator.of(context).pop()` 无法关闭弹窗；底层弹窗的 context 有效，按钮功能正常
+- **后果**: 从通知返回 APP 后，警报弹窗的确认/忽略按钮无法关闭弹窗，只能通过 Android 返回键退出，返回键后还有一个弹窗（底层弹窗按钮正常）
+- **解决方案**: (1) `main.dart` 中将 `pushNamedAndRemoveUntil` 改为 `popUntil`，回到已有的 DevicePage 而非创建新实例；(2) `device_page.dart` 中将 `_showNextUnackedAlarm` 等副作用从 Consumer builder 移到 `addListener` 监听器中，避免 build 时触发副作用；(3) `showDialog` 的 builder 使用 `dialogContext` 而非外层 `context` 进行 `Navigator.pop`；(4) `pendingTabIndex` 改为 getter/setter 并在赋值时触发 `notifyListeners()`，确保监听器能响应通知点击
+- **涉及文件**: `lib/main.dart`, `lib/ui/device_page.dart`, `lib/data/ble_provider.dart`
+
+---
+### ISSUE-018
+- **发现日期**: 2026-02-22
+- **原因**: `BleProvider._initRepository()` 是异步方法，在构造函数中 fire-and-forget 调用。如果 BLE 报警在 `_initRepository` 完成前到达，报警数据被添加到内存 `_alarmHistory` 列表 A 中，但因 `_repoReady=false` 未持久化到 SQLite。当 `_initRepository` 完成后，用 SQLite 加载的数据**直接替换** `_alarmHistory`（列表 B），列表 A 中的报警数据丢失。后续 `ackAlarm` 遍历列表 B 找不到该报警的 `eventId`，`isAcked` 无法设置为 true，UI 始终显示"未确认"。同时 `ackAlarm` 原实现在 BLE 发送失败时才设置 `_errorMessage`，找不到报警记录时无任何反馈
+- **后果**: 特定时序下（ESP32 端先按停止报警键再在 APP 端确认），报警记录永远显示"未确认"状态，且后续所有报警记录也可能受影响
+- **解决方案**: (1) `_initRepository` 改为合并策略：加载 SQLite 数据后，将初始化前收到的内存数据（按 eventId 去重）追加到列表中，并补写入 SQLite；(2) `ackAlarm` 改为乐观更新：先设置本地 `isAcked=true` 并通知 UI，再异步发送 BLE 命令和更新 SQLite；找不到记录时返回 false 并设置 `_errorMessage`；(3) `alarm_tab.dart` 中 ackAlarm 调用改为 await 并根据返回值显示 SnackBar 错误提示
+- **涉及文件**: `lib/data/ble_provider.dart`, `lib/ui/tabs/alarm_tab.dart`

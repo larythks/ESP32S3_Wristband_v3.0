@@ -151,12 +151,14 @@ void app_main(void)
     }
 
     // 初始化 DS3231 RTC
+    ds3231_time_t rtc_time = {0};
+    bool rtc_valid = false;
     ret = ds3231_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DS3231 init failed!");
     } else {
-        ds3231_time_t rtc_time = {0};
         if (ds3231_get_time(&rtc_time) == ESP_OK) {
+            rtc_valid = true;
             ESP_LOGI(TAG, "RTC time: %04u-%02u-%02u %02u:%02u:%02u (DOW=%u)",
                      rtc_time.year, rtc_time.month, rtc_time.day,
                      rtc_time.hour, rtc_time.minute, rtc_time.second,
@@ -182,6 +184,11 @@ void app_main(void)
     ret = ui_manager_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UI manager init failed!");
+    }
+
+    // 将开机时读到的 RTC 时间注入 UI 缓存，避免等待 I2C 总线空闲
+    if (rtc_valid) {
+        ui_manager_set_rtc_cache(&rtc_time);
     }
 
     // 初始化事件总线

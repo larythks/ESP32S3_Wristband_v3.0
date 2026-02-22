@@ -32,7 +32,12 @@ class BleProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isAppInForeground = true;
 
   /// 通知点击后待跳转的 Tab 索引（null=无待跳转，1=AlarmTab）
-  int? pendingTabIndex;
+  int? _pendingTabIndex;
+  int? get pendingTabIndex => _pendingTabIndex;
+  set pendingTabIndex(int? value) {
+    _pendingTabIndex = value;
+    if (value != null) notifyListeners();
+  }
 
   // --- 历史记录（内存缓存 + SQLite 持久化） ---
   List<TelemetryData> _telemetryHistory = [];
@@ -123,9 +128,38 @@ class BleProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       _repo = SqliteDataRepository();
       await _repo.cleanup();
-      _telemetryHistory = await _repo.getTelemetryHistory(limit: 360);
-      _alarmHistory = await _repo.getAlarmHistory(limit: 100);
+
+      // --- 合并遥测数据：保留 repo 初始化前通过 BLE 收到的内存数据 ---
+      final dbTelemetry = await _repo.getTelemetryHistory(limit: 360);
+      final dbTsSet = dbTelemetry
+          .map((t) => t.timestamp.millisecondsSinceEpoch)
+          .toSet();
+      final unsavedTelemetry = _telemetryHistory
+          .where((t) => !dbTsSet.contains(t.timestamp.millisecondsSinceEpoch))
+          .toList();
+      _telemetryHistory = [...dbTelemetry, ...unsavedTelemetry];
+
+      // --- 合并报警数据：保留 repo 初始化前通过 BLE 收到的内存数据 ---
+      final dbAlarms = await _repo.getAlarmHistory(limit: 100);
+      final dbEventIds = dbAlarms.map((a) => a.eventId).toSet();
+      final unsavedAlarms = _alarmHistory
+          .where((a) => !dbEventIds.contains(a.eventId))
+          .toList();
+      _alarmHistory = [...dbAlarms, ...unsavedAlarms];
+
       _repoReady = true;
+
+      // 将初始化前收到但未持久化的数据补写入 SQLite
+      for (final alarm in unsavedAlarms) {
+        await _repo.saveAlarm(alarm);
+      }
+      for (final t in unsavedTelemetry) {
+        await _repo.saveTelemetry(t);
+      }
+
+      debugPrint('[BleProvider] repo ready, '
+          'alarms=${_alarmHistory.length} (unsaved=${unsavedAlarms.length}), '
+          'telemetry=${_telemetryHistory.length} (unsaved=${unsavedTelemetry.length})');
       notifyListeners();
     } catch (e) {
       debugPrint('[BleProvider] SQLite init failed: $e');
@@ -194,25 +228,42 @@ class BleProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> ackAlarm(int eventId) async {
+  Future<bool> ackAlarm(int eventId) async {
+    // 1. 先更新本地状态（乐观更新），确保 UI 立即反映
+    bool found = false;
+    for (final alarm in _alarmHistory) {
+      if (alarm.eventId == eventId) {
+        alarm.isAcked = true;
+        found = true;
+      }
+    }
+    if (!found) {
+      debugPrint('[BleProvider] ackAlarm: eventId=$eventId not found in '
+          '_alarmHistory (${_alarmHistory.length} items)');
+      _errorMessage = '确认报警失败: 未找到对应的报警记录';
+      notifyListeners();
+      return false;
+    }
+    notifyListeners();
+
+    // 2. 发送 BLE ACK 命令
     try {
       await _ble.sendAckAlarm(eventId);
-      // 更新本地报警状态为已确认
-      for (final alarm in _alarmHistory) {
-        if (alarm.eventId == eventId) {
-          alarm.isAcked = true;
-          break;
-        }
-      }
-      // 同步更新 SQLite
-      if (_repoReady) {
-        await _repo.updateAlarmAcked(eventId);
-      }
-      notifyListeners();
+      debugPrint('[BleProvider] ackAlarm: BLE ACK sent for eventId=$eventId');
     } catch (e) {
-      _errorMessage = '确认报警失败: $e';
-      notifyListeners();
+      debugPrint('[BleProvider] ackAlarm: BLE send failed: $e');
+      // 本地状态已更新，BLE 发送失败不回滚
     }
+
+    // 3. 同步更新 SQLite
+    if (_repoReady) {
+      try {
+        await _repo.updateAlarmAcked(eventId);
+      } catch (e) {
+        debugPrint('[BleProvider] ackAlarm: SQLite update failed: $e');
+      }
+    }
+    return true;
   }
 
   Future<void> syncTime() async {

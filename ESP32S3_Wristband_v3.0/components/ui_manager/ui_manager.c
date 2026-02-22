@@ -385,8 +385,9 @@ static void ui_task(void *arg)
     uint32_t full_refresh_counter = 0;
     const uint32_t full_refresh_cycles = UI_REFRESH_INTERVAL_MS / UI_FAST_REFRESH_INTERVAL_MS;
 
-    /* HOME 页 RTC 检查计数器: 每 20 次 (10秒) 读一次 DS3231 */
-    uint8_t rtc_sync_counter = 0;
+    /* HOME 页 RTC 检查计数器: 每 20 次 (10秒) 读一次 DS3231
+     * 初始值设为 19，使 UI 任务首次循环即触发 RTC 读取 */
+    uint8_t rtc_sync_counter = UI_HOME_RTC_SYNC_CYCLES - 1;
     uint8_t local_tick_counter = 0;
 
     /* HOME 页温度刷新计数器: 30000ms / 500ms = 60 次
@@ -554,6 +555,24 @@ esp_err_t ui_manager_init(void)
     ESP_LOGI(TAG, "UI manager initialized (full refresh %d ms, fast refresh %d ms)",
              UI_REFRESH_INTERVAL_MS, UI_FAST_REFRESH_INTERVAL_MS);
     return ESP_OK;
+}
+
+/**
+ * @brief 预填充 HOME 页 RTC 时间缓存
+ */
+void ui_manager_set_rtc_cache(const ds3231_time_t *time)
+{
+    if (time == NULL) {
+        return;
+    }
+    if (ui_lock(pdMS_TO_TICKS(50))) {
+        s_home_cached_time = *time;
+        s_home_cached_time_valid = true;
+        ui_unlock();
+        ESP_LOGI(TAG, "RTC cache pre-filled: %04u-%02u-%02u %02u:%02u:%02u",
+                 time->year, time->month, time->day,
+                 time->hour, time->minute, time->second);
+    }
 }
 
 /**
