@@ -64,6 +64,10 @@ class BleProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (state == BleConnectionState.connected) {
         _startBleService();
         _startMqtt();
+        // 连接成功后自动请求上报数据
+        Future.delayed(const Duration(milliseconds: 500), () {
+          requestReport();
+        });
       } else if (state == BleConnectionState.disconnected) {
         _stopMqtt();
         _stopBleService();

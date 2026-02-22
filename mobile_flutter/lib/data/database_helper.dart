@@ -5,7 +5,6 @@ import 'models.dart';
 class DatabaseHelper {
   static DatabaseHelper? _instance;
   Database? _db;
-  int _writeCount = 0;
 
   DatabaseHelper._();
 
@@ -76,11 +75,6 @@ class DatabaseHelper {
       'data_valid': data.dataValid,
       'timestamp': data.timestamp.millisecondsSinceEpoch,
     });
-    _writeCount++;
-    if (_writeCount >= 100) {
-      _writeCount = 0;
-      await cleanup24h();
-    }
   }
 
   Future<List<TelemetryData>> queryTelemetry({
@@ -167,10 +161,11 @@ class DatabaseHelper {
 
   // ---- Cleanup ----
 
-  Future<void> cleanup24h() async {
-    final cutoff = DateTime.now().subtract(const Duration(hours: 24));
-    await deleteTelemetryBefore(cutoff);
-    await deleteAlarmsBefore(cutoff);
+  Future<void> cleanupBeforeToday() async {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    await deleteTelemetryBefore(todayStart);
+    await deleteAlarmsBefore(todayStart);
   }
 
   Future<void> close() async {

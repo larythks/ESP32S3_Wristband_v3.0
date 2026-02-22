@@ -24,7 +24,7 @@ class SqliteDataRepository implements DataRepository {
   Future<void> updateAlarmAcked(int eventId) =>
       _dbHelper.updateAlarmAcked(eventId, true);
 
-  Future<void> cleanup() => _dbHelper.cleanup24h();
+  Future<void> cleanup() => _dbHelper.cleanupBeforeToday();
 
   @override
   Future<void> dispose() => _dbHelper.close();

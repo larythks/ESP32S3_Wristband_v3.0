@@ -48,6 +48,8 @@ class _DashboardTabState extends State<DashboardTab> {
         setState(() {
           _isMeasuring = false;
         });
+        // 测量结束后自动请求上报数据
+        ble.requestReport();
       }
     });
   }

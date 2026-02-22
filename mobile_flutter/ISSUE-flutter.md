@@ -102,3 +102,35 @@
 - **后果**: 连接后仅第一条数据能触发 publish 日志，后续所有 telemetry 和 alarm 数据均不上传且无错误日志；即使首条 publish 执行成功，云端可能因 QoS/网络问题未收到
 - **解决方案**: (1) `publishTelemetry()` 和 `publishAlarm()` 整体包裹在 try-catch 中，捕获 jsonEncode 和所有其他异常; (2) `BleProvider` 中 `_mqtt.publishTelemetry()` / `_mqtt.publishAlarm()` 调用也加 try-catch 保护，防止异常杀死 Stream 监听器; (3) 移除 `_logOnce` 标志，每次 publish 均打印 msgId 和关键数据; (4) `_publish()` 返回 `int?`，调用方可检查是否成功
 - **涉及文件**: `lib/mqtt/mqtt_gateway.dart`, `lib/data/ble_provider.dart`
+
+---
+### ISSUE-012
+- **发现日期**: 2026-02-22
+- **原因**: 设备连接成功后，BleProvider 仅启动 BLE 前台服务和 MQTT，未主动向设备请求上报最新数据。用户必须手动进入设置页面点击"请求立即上报"按钮才能获取首次数据
+- **后果**: 连接后健康数据卡片全部显示 `--`，用户体验差，需要额外手动操作才能看到数据
+- **解决方案**: 在 `BleProvider` 的连接状态监听器中，当状态变为 `connected` 时，延迟 500ms 后自动调用 `requestReport()`，确保设备服务发现和时间同步完成后再请求上报
+- **涉及文件**: `lib/data/ble_provider.dart`
+
+---
+### ISSUE-013
+- **发现日期**: 2026-02-22
+- **原因**: `DashboardTab._startMeasure()` 中的 15 秒倒计时结束后，仅将 `_isMeasuring` 设为 false，未向设备请求上报测量结果。手动测量的数据需要设备主动上报或 App 主动请求才能收到
+- **后果**: 用户点击手动测量并等待 15 秒后，App 不会自动获取到新的测量数据，用户需手动到设置页面点击请求上报
+- **解决方案**: 在 `_startMeasure()` 的计时器回调中，当 `_countdown <= 0` 时，在设置 `_isMeasuring = false` 之后立即调用 `ble.requestReport()` 自动请求最新数据
+- **涉及文件**: `lib/ui/tabs/dashboard_tab.dart`
+
+---
+### ISSUE-014
+- **发现日期**: 2026-02-22
+- **原因**: `ScanPage` 在 `filteredResults.isEmpty && !isScanning` 时统一显示"点击搜索按钮开始扫描"提示，但当设备已连接时 AppBar 不显示搜索按钮（`!ble.isConnected` 条件隐藏），导致提示文字与实际 UI 不一致
+- **后果**: 用户从设备页面返回主界面后，看到"点击搜索按钮开始扫描"但找不到搜索按钮，造成困惑
+- **解决方案**: 在空状态提示文字的条件判断中增加 `ble.isConnected` 分支，已连接时显示"设备已连接"替代原有提示
+- **涉及文件**: `lib/ui/scan_page.dart`
+
+---
+### ISSUE-015
+- **发现日期**: 2026-02-22
+- **原因**: `DatabaseHelper.cleanup24h()` 使用 `DateTime.now().subtract(Duration(hours: 24))` 作为清理截止时间，保留的是最近 24 小时的数据而非当天的数据。例如当天凌晨 1 点时仍保留前一天 1 点之后的数据，数据边界不清晰
+- **后果**: 数据保留范围为滑动的 24 小时窗口，而非自然日（当天 00:00~23:59），与预期的"只保存当天数据"不一致
+- **解决方案**: 将 `cleanup24h()` 重命名为 `cleanupBeforeToday()`，cutoff 从 `now - 24h` 改为 `DateTime(now.year, now.month, now.day)` 即当天零点，删除零点之前的所有记录
+- **涉及文件**: `lib/data/database_helper.dart`, `lib/data/sqlite_repository.dart`

@@ -426,3 +426,17 @@
   - 修改: mobile_flutter/pubspec.yaml, mobile_flutter/lib/main.dart, mobile_flutter/lib/data/data_repository.dart, mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/device_page.dart, mobile_flutter/lib/ui/scan_page.dart
 - **验收状态**: 待验收
   - `flutter pub get` ✅ | `flutter analyze` ✅ (0 error, 3 pre-existing warnings) | `flutter test` ✅ 63 tests passed
+
+---
+
+### 2026-02-22 - 迭代 4.2 Bug 修复: 自动上报 + 提示文字修正
+
+- **迭代**: Week 4 - 迭代 4.2 Bug 修复
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 连接设备后自动请求上报数据（延迟 500ms 确保服务发现完成）
+  - 手动测量倒计时结束后自动请求上报最新测量数据
+  - ScanPage 已连接状态下空白区域提示从"点击搜索按钮开始扫描"改为"设备已连接"
+- **关键文件**: mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/tabs/dashboard_tab.dart, mobile_flutter/lib/ui/scan_page.dart
+- **验收状态**: 待验收
+- **附带修复**: ISSUE-flutter-012, ISSUE-flutter-013, ISSUE-flutter-014

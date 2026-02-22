@@ -205,7 +205,11 @@ class _ScanPageState extends State<ScanPage> {
                   child: filteredResults.isEmpty
                       ? Center(
                           child: Text(
-                            isScanning ? '正在搜索 CareBand 设备...' : '点击搜索按钮开始扫描',
+                            isScanning
+                                ? '正在搜索 CareBand 设备...'
+                                : ble.isConnected
+                                    ? '设备已连接'
+                                    : '点击搜索按钮开始扫描',
                             style: Theme.of(context).textTheme.bodyLarge,
                           ),
                         )
