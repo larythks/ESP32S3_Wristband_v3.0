@@ -55,8 +55,8 @@ static uint16_t s_status_val_handle    = 0;
 /* 时间偏移量 (秒): Unix时间戳 = esp_timer秒 + s_time_offset */
 static int64_t s_time_offset = 0;
 
-/* Telemetry 动态间隔 */
-static volatile uint32_t s_telemetry_interval_ms = BLE_TELEMETRY_INTERVAL_MS;
+/* Telemetry 动态间隔: 正常模式为事件驱动(portMAX_DELAY) */
+static volatile uint32_t s_telemetry_interval_ms = portMAX_DELAY;
 static TaskHandle_t s_telemetry_task_handle = NULL;
 
 /* ============== 前向声明 ============== */
@@ -69,6 +69,7 @@ static int ble_start_advertise(void);
 static void telemetry_task(void *param);
 static esp_err_t send_telemetry_now(void);
 static void on_sampling_mode_change(const event_t *event, void *user_data);
+static void on_hr_result_ready(const event_t *event, void *user_data);
 
 /* GATT access 回调 */
 static int gatt_chr_access_telemetry(uint16_t conn_handle, uint16_t attr_handle,
@@ -595,13 +596,13 @@ static esp_err_t send_telemetry_now(void)
 }
 
 /**
- * Telemetry 定时上报任务
- * 每 BLE_TELEMETRY_INTERVAL_MS (120秒) 采集传感器数据并通过 Notify 发送
+ * Telemetry 上报任务
+ * 正常模式: 纯事件驱动，等待 EVT_HR_RESULT_READY 唤醒后发送
+ * 实时模式: 保持 16 秒周期上报
  */
 static void telemetry_task(void *param)
 {
-    ESP_LOGI(TAG, "Telemetry task started, interval=%d ms",
-             BLE_TELEMETRY_INTERVAL_MS);
+    ESP_LOGI(TAG, "Telemetry task started (event-driven in normal mode)");
 
     while (1) {
         uint32_t interval = s_telemetry_interval_ms;
@@ -626,12 +627,24 @@ static void on_sampling_mode_change(const event_t *event, void *user_data)
         ESP_LOGI(TAG, "Telemetry interval -> %d ms (realtime)",
                  BLE_TELEMETRY_REALTIME_INTERVAL_MS);
     } else {
-        s_telemetry_interval_ms = BLE_TELEMETRY_INTERVAL_MS;
-        ESP_LOGI(TAG, "Telemetry interval -> %d ms (normal)",
-                 BLE_TELEMETRY_INTERVAL_MS);
+        s_telemetry_interval_ms = portMAX_DELAY;
+        ESP_LOGI(TAG, "Telemetry interval -> event-driven (normal)");
     }
 
     /* 唤醒 telemetry 任务，立即应用新间隔 */
+    if (s_telemetry_task_handle != NULL) {
+        xTaskNotify(s_telemetry_task_handle, 0, eNoAction);
+    }
+}
+
+/**
+ * HR/SpO2 测量完成且数据全部有效回调 - 触发立即上报
+ */
+static void on_hr_result_ready(const event_t *event, void *user_data)
+{
+    (void)event;
+    (void)user_data;
+    ESP_LOGI(TAG, "HR result ready, triggering telemetry upload");
     if (s_telemetry_task_handle != NULL) {
         xTaskNotify(s_telemetry_task_handle, 0, eNoAction);
     }
@@ -713,6 +726,9 @@ esp_err_t ble_service_init(void)
 
     /* 订阅采样模式变更事件 */
     event_subscribe(EVT_SAMPLING_MODE, on_sampling_mode_change, NULL);
+
+    /* 订阅 HR/SpO2 结果就绪事件，触发立即上报 */
+    event_subscribe(EVT_HR_RESULT_READY, on_hr_result_ready, NULL);
 
     s_initialized = true;
     ESP_LOGI(TAG, "BLE service initialized, device name: %s", BLE_DEVICE_NAME);

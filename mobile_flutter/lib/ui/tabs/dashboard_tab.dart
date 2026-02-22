@@ -48,8 +48,7 @@ class _DashboardTabState extends State<DashboardTab> {
         setState(() {
           _isMeasuring = false;
         });
-        // 测量结束后自动请求上报数据
-        ble.requestReport();
+        // ESP32 端计算完成后会自动触发 BLE 上报，无需主动请求
       }
     });
   }

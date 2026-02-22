@@ -44,8 +44,14 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-mqtt_config.dart
+# Android signing key files
+/android/key.properties
+/android/key/
+*.jks
+*.keystore
 
-PROMPT-4.2-enhancement.md
+mqtt_config.dart
+build_release.ps1
+RELEASE_GUIDE.md
 
 CA/

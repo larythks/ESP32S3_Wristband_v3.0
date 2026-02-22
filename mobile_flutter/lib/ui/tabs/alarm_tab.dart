@@ -176,10 +176,18 @@ class _AlarmCard extends StatelessWidget {
                             minimumSize: Size.zero,
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
-                          onPressed: () {
-                            context
+                          onPressed: () async {
+                            final ok = await context
                                 .read<BleProvider>()
                                 .ackAlarm(alarm.eventId);
+                            if (!ok && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('确认失败：未找到对应的报警记录'),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
                           },
                           child: const Text(
                             '确认',

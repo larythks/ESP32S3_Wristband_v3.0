@@ -397,3 +397,31 @@
   - ESP32 固件 ↔ Flutter App ↔ EMQX Cloud 全链路联调验证通过
   - BLE 数据采集、Telemetry 上报、报警流程、MQTT 转发功能正常
   - 所有迭代 4.x 功能验收通过
+
+---
+
+### 2026-02-22 - BLE Telemetry 上报改为事件驱动
+
+- **迭代**: 优化（影响迭代 2.4、4.2）
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 正常模式 BLE Telemetry 从固定 120 秒周期改为事件驱动，仅在 HR/SpO2/温度三项数据全部有效时触发上报
+  - 新增 `EVT_HR_RESULT_READY` 事件类型，health_monitor 计算完成后发布
+  - ble_service 订阅该事件，唤醒 telemetry_task 立即上报
+  - 实时模式（16 秒间隔）保持不变
+  - Flutter 端删除手动测量结束后的 `requestReport()` 调用，避免重复发送
+- **关键文件**: event_bus.h, health_monitor.c, ble_service.c, dashboard_tab.dart
+- **验收状态**: 待验收
+
+---
+
+### 2026-02-22 - Bug 修复: 报警弹窗双弹窗 + ACK 竞态条件
+
+- **迭代**: Bug 修复（影响迭代 4.2）
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - **情况一修复（双弹窗）**: `main.dart` 通知点击回调从 `pushNamedAndRemoveUntil` 改为 `popUntil`，回到已有 DevicePage 而非创建新实例；`device_page.dart` 将副作用（弹窗、断连导航、tab 切换）从 Consumer builder 移到 `addListener` 监听器中；`showDialog` 使用 `dialogContext` 进行 `Navigator.pop` 而非外层 context
+  - **情况二修复（ACK 失败）**: `ble_provider.dart` 的 `_initRepository` 从直接替换 `_alarmHistory` 改为合并策略，保留初始化前收到的内存数据并补写入 SQLite；`ackAlarm` 改为乐观更新模式（先更新本地状态再发 BLE）
+  - **错误反馈**: `alarm_tab.dart` 的确认按钮增加 SnackBar 失败提示
+- **关键文件**: lib/main.dart, lib/ui/device_page.dart, lib/data/ble_provider.dart, lib/ui/tabs/alarm_tab.dart
+- **附带修复**: ISSUE-flutter-017, ISSUE-flutter-018

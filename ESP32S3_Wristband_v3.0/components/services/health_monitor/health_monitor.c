@@ -165,6 +165,9 @@ esp_err_t health_monitor_init(void)
     // memset 后 temp_validity == MEASURE_VALID(0)，会导致 UI 误判温度有效并显示 0°C
     // 显式设为无信号状态，使 UI 在首次真实数据到达前显示 "--.-C"
     s_ctx.status.temp_validity = MEASURE_INVALID_NO_SIGNAL;
+    // 同样设置心率和血氧为无效状态，避免开机时上报 0 值
+    s_ctx.status.hr_validity = MEASURE_INVALID_NO_SIGNAL;
+    s_ctx.status.spo2_validity = MEASURE_INVALID_NO_SIGNAL;
     s_ctx.temp.last_valid_temp = 25.0f;  // 默认环境温度
 
     ESP_LOGI(TAG, "Health monitor initialized");
@@ -336,6 +339,21 @@ static void on_sensor_data(const event_t *event, void *user_data)
                 }
             }
             s_ctx.ppg_result_fresh = true;
+
+            // HR、SpO2、温度三者全部有效时，发布事件触发 BLE 上报
+            if (s_ctx.status.hr_validity == MEASURE_VALID &&
+                s_ctx.status.spo2_validity == MEASURE_VALID &&
+                s_ctx.status.temp_validity == MEASURE_VALID) {
+                event_data_t evt;
+                memset(&evt, 0, sizeof(evt));
+                event_publish(EVT_HR_RESULT_READY, &evt);
+                ESP_LOGI(TAG, "All vitals valid, trigger BLE telemetry");
+            } else {
+                ESP_LOGW(TAG, "Vitals not all valid (hr=%d spo2=%d temp=%d), skip BLE upload",
+                         s_ctx.status.hr_validity,
+                         s_ctx.status.spo2_validity,
+                         s_ctx.status.temp_validity);
+            }
         }
     }
 
