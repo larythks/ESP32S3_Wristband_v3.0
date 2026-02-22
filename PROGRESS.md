@@ -21,10 +21,10 @@
 | Week 3 | 迭代 3.2: I2S 音频播放 | ✅ 已完成 | 2026-02-18 |
 | Week 3 | 迭代 3.3: ESP-SR 语音识别集成 | ✅ 已完成 | 2026-02-18 |
 | Week 3 | 迭代 3.4: 完整报警流程联调 | ✅ 已完成 | 2026-02-19 |
-| Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | 🔲 待开始 | - |
-| Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | 🔲 待开始 | - |
-| Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | 🔲 待开始 | - |
-| Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | 🔲 待开始 | - |
+| Week 4 | 迭代 4.1: Flutter 项目搭建 + BLE 连接 | ✅ 已完成 | 2026-02-20 |
+| Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | ✅ 已完成 | 2026-02-21 |
+| Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | ✅ 已完成 | 2026-02-21 |
+| Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | ✅ 已完成 | 2026-02-22 |
 
 ## 详细记录
 
@@ -110,7 +110,7 @@
 - **状态**: ✅ 已完成
 - **主要改动**:
   - 事件总线：基于 FreeRTOS Queue 的发布/订阅模式
-  - 传感器服务：常规采样（温度 30s、心率血氧 120s、IMU 50Hz）和实时采样（1s/次）两种模式
+  - 传感器服务：常规采样（温度 30s、心率血氧 480s、IMU 50Hz）和实时采样（16s/次）两种模式
   - DS18B20 采样改为异步状态机模式（非阻塞）
 - **关键文件**: components/services/event_bus/, components/services/sensor_service/, main/main.c
 - **附带修复**:
@@ -169,7 +169,7 @@
 - **主要改动**:
   - NimBLE 初始化、GATT 注册：1 个 PRIMARY 服务 + 4 个特征（Telemetry/Alarm/Command/Status）
   - 广播数据仅 Flags + 设备名，128-bit UUID 放入 Scan Response（ISSUE-005）
-  - Telemetry 上报任务：独立线程，间隔 120 秒
+  - Telemetry 上报任务：独立线程，间隔 480 秒
   - 连接/断连事件通过 event_bus 发布 EVT_BLE_CONN
 - **关键文件**: components/ble_gatt/
 
@@ -273,7 +273,7 @@
 - **主要改动**:
   - 报警缓存环形队列（N=16）+ BLE 重连补发任务
   - ACK_ALARM 命令对接 alarm_ack(event_id)
-  - Telemetry 实时频率切换（xTaskNotifyWait，正常 120s / 实时 5s）
+  - Telemetry 实时频率切换（xTaskNotifyWait，正常 480s / 实时 16s）
   - Status 特征返回真实 alarm_state
   - 删除 SPO2_WARNING 功能（ISSUE-036）
   - PRE_ALARM 播放 "pre_alarm_fall"，ALARMING 跌倒播放 "alarm_help"（ISSUE-037）
@@ -327,3 +327,73 @@
   - 宏 UI_STEP_REFRESH_INTERVAL_MS → UI_FAST_REFRESH_INTERVAL_MS
 - **关键文件**: components/ui_manager/include/ui_manager.h, components/ui_manager/ui_manager.c
 - **附带修复**: ISSUE-043
+
+---
+
+### 2026-02-20~21 - 迭代 4.1: Flutter 项目搭建 + BLE 连接
+
+- **迭代**: Week 4 - 迭代 4.1
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 项目基础配置: pubspec.yaml 添加 flutter_blue_plus/provider/permission_handler/intl 依赖
+  - Android 配置: minSdk=23, applicationId=com.careband.app, BLE/定位权限声明
+  - 数据模型: BleConnectionState/AlarmType 枚举, TelemetryData/AlarmData/DeviceStatus 数据类
+  - BLE 通信层: 单例 BleManager (扫描/连接/GATT/Notify/命令), BleParser (二进制解析 Telemetry 20B/Alarm 16B/Status 3B), BleCommand (ACK/SYNC_TIME/REQUEST_REPORT/MANUAL_MEASURE + nonce 递增)
+  - 状态管理: BleProvider (ChangeNotifier) 封装 BleManager streams
+  - UI 页面: ScanPage (权限检查+CareBand 过滤+自动跳转+已连接设备入口), DevicePage (卡片式 Telemetry+断连自动返回), DeviceTile
+  - Android 前台服务 BleKeepAliveService 保活 BLE 连接，防止系统回收进程
+  - ScanPage 返回键改为 moveTaskToBack，退到后台而非销毁 Activity
+  - 单元测试: 63 个测试全部通过
+- **关键文件**: mobile_flutter/lib/ble/, mobile_flutter/lib/data/, mobile_flutter/lib/ui/, mobile_flutter/android/app/src/main/kotlin/com/careband/app/
+- **验收状态**: ✅ 已验收
+  - `flutter pub get` ✅ | `flutter analyze` ✅ | `flutter test` ✅ 63 tests passed
+- **附带修复**:
+  - ISSUE-flutter-001: widget_test.dart 引用旧 MyApp 类
+  - ISSUE-flutter-002: ScanPage 每次数据更新重复 push DevicePage
+  - ISSUE-flutter-003: 断开连接按钮未真正断开 BLE（重构 disconnect() 消除竞态）
+  - ISSUE-flutter-004: 连接过程瞬态断连事件导致 _device 被清空（添加 _isConnecting 标志）
+  - ISSUE-flutter-007: ScanPage 返回后显示旧扫描结果
+  - ISSUE-flutter-009: 后台 BLE 连接被系统回收（前台服务保活）
+
+---
+
+### 2026-02-21~22 - 迭代 4.2: 数据展示 UI + 报警 UI + 本地存储 + 通知
+
+- **迭代**: Week 4 - 迭代 4.2
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - Material 3 主题（信赖蓝 #2D7DD2）、三 Tab 导航（数据面板 / 报警记录 / 设置）
+  - DashboardTab: 2×2 健康数据卡片 + fl_chart 趋势折线图 + 手动测量按钮（15s 倒计时）
+  - AlarmTab: 报警历史列表（倒序）+ ACK 按钮 + AlertDialog 弹窗（Set 防重复弹出）
+  - SettingsTab: 设备信息卡、同步时间/请求上报、断开连接
+  - SQLite 本地持久化：telemetry + alarm 两表，24h 自动清理，断连不清空历史
+  - Android 报警通知：后台触发系统通知，点击跳转 AlarmTab
+  - 连接后自动请求上报，手动测量结束后自动上报
+- **关键文件**: mobile_flutter/lib/ui/tabs/, mobile_flutter/lib/ui/widgets/, mobile_flutter/lib/data/, mobile_flutter/lib/services/notification_service.dart
+- **附带修复**: ISSUE-flutter-005~006, ISSUE-flutter-008, ISSUE-flutter-010, ISSUE-flutter-012~014, ISSUE-flutter-016
+
+---
+
+### 2026-02-21 - 迭代 4.3: MQTT 网关 + EMQX Cloud 部署
+
+- **迭代**: Week 4 - 迭代 4.3
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - MqttGateway 单例：TLS 连接、LWT 遗嘱消息、指数退避断线重连（2s→30s max）
+  - 上行转发：Telemetry→JSON QoS0、Alarm→JSON QoS1
+  - 下行命令：订阅 cmd topic，解析 JSON 后调用 BleManager 对应方法
+  - BLE connected→启动 MQTT，disconnected→停止 MQTT
+  - SettingsTab 新增"云端连接"状态行
+- **关键文件**: mobile_flutter/lib/mqtt/, mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/tabs/settings_tab.dart
+- **附带修复**: ISSUE-flutter-011
+
+---
+
+### 2026-02-22 - 迭代 4.4: 端到端联调 + 问题修复
+
+- **迭代**: Week 4 - 迭代 4.4
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - ESP32 固件 ↔ Flutter App ↔ EMQX Cloud 全链路联调验证通过
+  - BLE 数据采集、Telemetry 上报、报警流程、MQTT 转发功能正常
+  - 所有迭代 4.x 功能验收通过
