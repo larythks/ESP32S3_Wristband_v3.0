@@ -23,6 +23,7 @@ extern "C" {
 // 心率测量窗口配置
 #define SENSOR_HR_MEASURE_WINDOW_MS     15000   // 15秒测量窗口
 #define SENSOR_HR_AUTO_INTERVAL_MS      480000  // 8分钟自动触发间隔
+#define SENSOR_HR_BOOT_TRIGGER_DELAY_MS 1500    // Keep boot auto trigger; delay 1.5s to ease I2C contention
 
 // 实时采样间隔 (ms)
 #define SENSOR_REALTIME_INTERVAL        16000   // 实时模式: 16秒(匹配15秒HR测量窗口)
