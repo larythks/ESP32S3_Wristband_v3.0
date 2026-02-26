@@ -75,7 +75,7 @@ flutter:
   uses-material-design: true
 
   assets:
-    - CA/emqxsl-ca.crt
+    - assets/CA/emqxsl-ca.crt
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

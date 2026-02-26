@@ -51,7 +51,6 @@ app.*.map.json
 *.keystore
 
 mqtt_config.dart
-build_release.ps1
 RELEASE_GUIDE.md
 
 CA/

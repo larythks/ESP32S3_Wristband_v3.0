@@ -1233,3 +1233,704 @@ storage,  data, spiffs,  0x610000, 0x400000,
 - **宏定义**: UPPER_SNAKE_CASE（如 `MAX_ALARM_QUEUE_SIZE`）
 - **文件名**: snake_case（如 `health_monitor.c`）
 - **组件目录**: snake_case（如 `fall_detect/`）
+
+---
+
+## Phase 2：家属远程监护 App（family_flutter/）
+
+### 背景与目标
+
+Phase 1（迭代 1.1 ~ 4.4）已完成手环端全部功能和 BLE 网关 Flutter App（`mobile_flutter/`），数据已通过 EMQX Cloud 上云。但目前缺少远程端——老人家属无法在 BLE 范围外监护老人健康状况。
+
+**Phase 2 目标**：创建独立的家属远程监护 App（`family_flutter/`），通过 MQTT 订阅云端数据，实现：
+- 实时查看老人健康数据（心率、血氧、环境温度、步数）
+- 报警即时推送（跌倒、阈值告警、手动求助等）
+- 趋势图表分析（24小时/7天）与每日健康摘要
+- 报警历史记录与远程 ACK 确认
+- 后台常驻保活，确保报警不遗漏
+
+**数据链路**：手环 → 网关 App（BLE）→ EMQX Cloud（MQTT）→ **家属 App（MQTT 订阅）**
+
+### 核心架构决策
+
+| 决策 | 方案 |
+|------|------|
+| App 架构 | 全新独立 Flutter 项目，不依赖 BLE，纯 MQTT 订阅 |
+| MQTT 角色 | 订阅者（接收 telemetry/alarm/status/lwt），可发布 cmd |
+| 认证方式 | 固定 MQTT 账号 + 手动输入 device_id 绑定 |
+| 多用户 | 每个实例生成唯一 client_id（`family_{device_id}_{random}`） |
+| 后台保活 | Android 前台服务 MqttKeepAliveService |
+| 本地存储 | SQLite，7 天自动清理 |
+| 状态管理 | Provider（ChangeNotifier），复用网关 App 架构模式 |
+| UI 语言 | 纯中文，Material 3 |
+
+---
+
+### P2-1 模块边界表
+
+#### lib/mqtt/
+| 项目 | 内容 |
+|-----|------|
+| 职责 | MQTT TLS 连接、主题订阅、消息分发、断线重连、cmd 发布 |
+| 不做 | 数据解析/存储（交给 data 层和 providers 层） |
+| 对外接口 | `MqttSubscriber` 单例类 |
+| 依赖 | mqtt_client |
+
+#### lib/data/
+| 项目 | 内容 |
+|-----|------|
+| 职责 | 数据模型定义、SQLite CRUD、7 天自动清理、Repository 模式封装 |
+| 不做 | 网络通信、UI 渲染 |
+| 对外接口 | `TelemetryRecord`, `AlarmRecord`, `DeviceStatusRecord`, `DailySummary`, `DatabaseHelper`, `FamilyRepository` |
+| 依赖 | sqflite, path |
+
+#### lib/providers/
+| 项目 | 内容 |
+|-----|------|
+| 职责 | 应用状态管理、MQTT 消息消费→状态更新→UI 通知、设备绑定逻辑 |
+| 不做 | 直接操作 MQTT 或 SQLite（通过 mqtt/ 和 data/ 层） |
+| 对外接口 | `DeviceProvider`, `HealthAnalysisProvider` |
+| 依赖 | provider, mqtt/, data/ |
+
+#### lib/services/
+| 项目 | 内容 |
+|-----|------|
+| 职责 | 本地通知推送、报警铃声/振动 |
+| 不做 | 数据处理、UI 渲染 |
+| 对外接口 | `NotificationService` |
+| 依赖 | flutter_local_notifications |
+
+#### lib/ui/
+| 项目 | 内容 |
+|-----|------|
+| 职责 | 页面 UI、报警弹窗、图表展示、设置交互 |
+| 不做 | 业务逻辑（通过 providers 层） |
+| 对外接口 | 各 Page/Tab/Widget |
+| 依赖 | provider, fl_chart |
+
+#### android/kotlin（原生层）
+| 项目 | 内容 |
+|-----|------|
+| 职责 | Android 前台服务（MqttKeepAliveService）、保活通知、MethodChannel 桥接 |
+| 不做 | 业务逻辑（仅维持进程存活） |
+| 对外接口 | MethodChannel `com.careband.family/keepalive`（start/stop） |
+| 依赖 | Android Service API |
+
+---
+
+### P2-2 数据模型定义
+
+#### TelemetryRecord
+```dart
+class TelemetryRecord {
+  final int? id;
+  final String deviceId;
+  final double temp;        // 环境温度 °C
+  final int heartRate;      // 心率 bpm
+  final int spo2;           // 血氧 %
+  final int steps;          // 步数
+  final int battery;        // 电量 %
+  final DateTime timestamp; // 设备时间戳
+  final DateTime receivedAt;// 本地接收时间
+}
+```
+
+#### AlarmRecord
+```dart
+class AlarmRecord {
+  final int? id;
+  final String deviceId;
+  final int eventId;        // 唯一事件 ID
+  final FamilyAlarmType alarmType; // 报警类型
+  final double value;       // 触发值
+  final int battery;        // 电量 %
+  final DateTime timestamp; // 设备时间戳
+  final DateTime receivedAt;// 本地接收时间
+  final bool acknowledged;  // 是否已远程 ACK
+  final DateTime? ackedAt;  // ACK 时间
+}
+```
+
+#### FamilyAlarmType 枚举
+```dart
+enum FamilyAlarmType {
+  tempHigh,      // 1 - 环境温度高
+  tempLow,       // 2 - 环境温度低
+  heartRateHigh, // 3 - 心率高
+  heartRateLow,  // 4 - 心率低
+  spo2Low,       // 5 - 血氧低
+  fall,          // 6 - 跌倒
+  manual,        // 7 - 手动报警
+  spo2Warning,   // 8 - 血氧预警
+  callFamily,    // 9 - 呼叫家人
+  unknown;       // 未知类型
+}
+```
+
+#### DeviceStatusRecord
+```dart
+class DeviceStatusRecord {
+  final String deviceId;
+  final bool online;        // 设备是否在线（LWT / status）
+  final DateTime lastSeen;  // 最后一次收到消息的时间
+  final int? battery;       // 最近电量
+}
+```
+
+#### DailySummary
+```dart
+class DailySummary {
+  final DateTime date;
+  final double avgTemp;
+  final double minTemp;
+  final double maxTemp;
+  final int avgHeartRate;
+  final int minHeartRate;
+  final int maxHeartRate;
+  final int avgSpo2;
+  final int minSpo2;
+  final int maxSteps;       // 当天最大步数（累积值）
+  final int alarmCount;     // 当天报警次数
+}
+```
+
+---
+
+### P2-3 SQLite Schema
+
+#### telemetry 表
+```sql
+CREATE TABLE telemetry (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id   TEXT    NOT NULL,
+  temp        REAL    NOT NULL,
+  heart_rate  INTEGER NOT NULL,
+  spo2        INTEGER NOT NULL,
+  steps       INTEGER NOT NULL,
+  battery     INTEGER NOT NULL,
+  timestamp   INTEGER NOT NULL,  -- Unix 秒（设备端）
+  received_at INTEGER NOT NULL   -- Unix 毫秒（本地）
+);
+CREATE INDEX idx_telemetry_device_time ON telemetry(device_id, timestamp);
+```
+
+#### alarm 表
+```sql
+CREATE TABLE alarm (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id   TEXT    NOT NULL,
+  event_id    INTEGER NOT NULL,
+  alarm_type  INTEGER NOT NULL,
+  value       REAL    NOT NULL,
+  battery     INTEGER NOT NULL,
+  timestamp   INTEGER NOT NULL,
+  received_at INTEGER NOT NULL,
+  acknowledged INTEGER NOT NULL DEFAULT 0,
+  acked_at    INTEGER
+);
+CREATE INDEX idx_alarm_device_time ON alarm(device_id, timestamp);
+```
+
+#### config 表
+```sql
+CREATE TABLE config (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+-- 预置键: 'device_id', 'mqtt_host', 'mqtt_port', 'last_cleanup'
+```
+
+#### 7 天自动清理策略
+```
+触发时机：App 启动时 + 每 24 小时定时触发
+清理规则：DELETE FROM telemetry WHERE received_at < (now - 7天)
+          DELETE FROM alarm WHERE received_at < (now - 7天) AND acknowledged = 1
+保留策略：未 ACK 的报警不清理（即使超过 7 天）
+```
+
+---
+
+### P2-4 迭代里程碑总览
+
+```
+Phase 2: 家属远程监护 App
+├─ 迭代 F-1: 项目搭建 + MQTT TLS 连接
+├─ 迭代 F-2: 数据模型 + SQLite 存储 + 7天清理
+├─ 迭代 F-3: Provider 状态管理 + 设备绑定 + 前台服务
+├─ 迭代 F-4: Dashboard UI + 实时健康展示 + 报警通知
+├─ 迭代 F-5: 趋势图表(24h/7天) + 每日健康摘要 + 异常提示
+├─ 迭代 F-6: 报警历史 + 统计图表 + 远程 ACK
+└─ 迭代 F-7: 设置页 + UI 精修 + 端到端联调
+```
+
+| 迭代 | 内容 | 关键产出 |
+|------|------|---------|
+| F-1 | 项目搭建 + MQTT TLS 连接 | Flutter 项目、MqttSubscriber、CA 证书 |
+| F-2 | 数据模型 + SQLite 存储 + 7天清理 | models.dart、database_helper.dart、family_repository.dart |
+| F-3 | Provider 状态管理 + 设备绑定 + 前台服务 | DeviceProvider、BindingPage、MqttKeepAliveService |
+| F-4 | Dashboard UI + 实时健康展示 + 报警通知 | HomePage、DashboardTab、NotificationService、AlarmDialog |
+| F-5 | 趋势图表(24h/7天) + 每日健康摘要 + 异常提示 | TrendTab、TrendChart、SummaryCard、AnomalyTips |
+| F-6 | 报警历史 + 统计图表 + 远程 ACK | AlarmTab、AlarmStats（饼图+柱状图）、远程命令 |
+| F-7 | 设置页 + UI 精修 + 端到端联调 | SettingsTab、主题优化、集成测试 |
+
+---
+
+### P2-5 逐迭代计划
+
+#### 迭代 F-1: 项目搭建 + MQTT TLS 连接
+
+**目标**: 创建全新 Flutter 项目，实现与 EMQX Cloud 的 TLS 安全连接，验证订阅/接收消息
+
+**变更范围**:
+- 新建 `family_flutter/` Flutter 项目
+- 新建 `lib/mqtt/mqtt_subscriber.dart`
+- 新建 `lib/mqtt/mqtt_config.dart`（gitignored）
+- 新建 `assets/CA/emqxsl-ca.crt`
+- 配置 `pubspec.yaml`
+- 配置 `.gitignore`
+
+**步骤**:
+1. 使用 `flutter create` 创建 `family_flutter` 项目，配置 `pubspec.yaml` 基础依赖
+2. 将 EMQX Cloud CA 证书放入 `assets/CA/emqxsl-ca.crt`，在 `pubspec.yaml` 注册 assets
+3. 创建 `mqtt_config.dart` 存放 MQTT 连接配置（host/port/username/password），并加入 `.gitignore`
+4. 实现 `MqttSubscriber` 单例类：TLS 连接、自动重连、主题订阅、消息回调分发
+5. 在 `main.dart` 中添加临时测试页面，显示 MQTT 连接状态和接收到的原始消息
+6. 使用网关 App 发布测试数据，验证家属 App 能正确接收
+
+**产出物**:
+- `family_flutter/` 完整 Flutter 项目骨架
+- `lib/mqtt/mqtt_subscriber.dart`
+- `lib/mqtt/mqtt_config.dart`（gitignored）
+- `assets/CA/emqxsl-ca.crt`
+
+**验收方法**:
+- `flutter analyze` 无错误
+- App 启动后成功连接 EMQX Cloud（日志显示 `Connected`）
+- 订阅 `careband/+/telemetry` 后能接收到网关 App 发布的测试数据
+- 断网后自动重连成功
+
+**用户验证清单**:
+- [ ] Flutter 项目编译通过
+- [ ] MQTT TLS 连接成功
+- [ ] 能接收 telemetry 消息
+- [ ] 断线自动重连
+
+---
+
+#### 迭代 F-2: 数据模型 + SQLite 存储 + 7天清理
+
+**目标**: 实现数据模型、SQLite 持久化存储和 7 天自动清理策略
+
+**变更范围**:
+- 新建 `lib/data/models.dart`
+- 新建 `lib/data/database_helper.dart`
+- 新建 `lib/data/family_repository.dart`
+
+**步骤**:
+1. 实现 `models.dart`：定义 TelemetryRecord、AlarmRecord、DeviceStatusRecord、DailySummary、FamilyAlarmType
+2. 实现 `database_helper.dart`：SQLite 初始化、建表（telemetry/alarm/config）、版本迁移
+3. 实现 `family_repository.dart`：Repository 模式封装 CRUD 操作
+4. 实现 7 天自动清理逻辑：App 启动时触发 + 定时 24 小时触发
+5. 实现 DailySummary 聚合查询（AVG/MIN/MAX）
+6. 编写单元测试验证 CRUD 和清理逻辑
+
+**产出物**:
+- `lib/data/models.dart`
+- `lib/data/database_helper.dart`
+- `lib/data/family_repository.dart`
+
+**验收方法**:
+- `flutter analyze` 无错误
+- `flutter test` 通过（CRUD + 清理）
+- 插入测试数据后查询返回正确
+- 超过 7 天的已确认报警被清理，未确认报警保留
+- DailySummary 聚合结果正确
+
+**用户验证清单**:
+- [ ] 数据模型定义完整
+- [ ] SQLite 建表成功
+- [ ] CRUD 操作正确
+- [ ] 7 天清理策略生效
+- [ ] 未 ACK 报警不被清理
+
+---
+
+#### 迭代 F-3: Provider 状态管理 + 设备绑定 + 前台服务
+
+**目标**: 实现 Provider 状态管理架构、设备绑定流程、Android 前台服务保活
+
+**变更范围**:
+- 新建 `lib/providers/device_provider.dart`
+- 新建 `lib/providers/health_analysis_provider.dart`
+- 新建 `lib/ui/binding_page.dart`
+- 新建 `android/.../kotlin/com/careband/family/MqttKeepAliveService.kt`
+- 修改 `android/.../kotlin/com/careband/family/MainActivity.kt`
+- 修改 `lib/main.dart`
+
+**步骤**:
+1. 实现 `DeviceProvider`：管理绑定的 device_id、MQTT 连接状态、设备在线状态、最新遥测数据
+2. 实现 `HealthAnalysisProvider`：管理历史数据查询、DailySummary、趋势数据缓存
+3. 实现 `BindingPage`：输入 device_id、保存到 SharedPreferences 和 SQLite config 表、触发 MQTT 订阅
+4. 实现 Android 前台服务 `MqttKeepAliveService`：Notification Channel、MethodChannel 桥接
+5. 在 `MainActivity.kt` 中注册 MethodChannel，实现 start/stop 前台服务
+6. 在 `main.dart` 中配置 MultiProvider，串联 MQTT → Provider → UI 数据流
+
+**前台服务设计**:
+```
+MethodChannel: com.careband.family/keepalive
+  ├─ startService()  → 启动前台服务，显示常驻通知 "家属监护运行中"
+  └─ stopService()   → 停止前台服务
+```
+
+**产出物**:
+- `lib/providers/device_provider.dart`
+- `lib/providers/health_analysis_provider.dart`
+- `lib/ui/binding_page.dart`
+- `android/.../MqttKeepAliveService.kt`
+- 修改后的 `MainActivity.kt`
+- 修改后的 `main.dart`
+
+**验收方法**:
+- `flutter analyze` 无错误
+- 输入 device_id 后 App 自动订阅对应主题
+- 收到 telemetry 消息后 Provider 状态更新，UI 刷新
+- App 切到后台 30 分钟后前台服务仍运行（通知栏可见）
+- 杀掉 App 后前台服务保持（Android 行为验证）
+
+**用户验证清单**:
+- [ ] 设备绑定页面可输入 device_id
+- [ ] 绑定后 MQTT 自动订阅
+- [ ] Provider 状态正确更新
+- [ ] 前台服务常驻通知可见
+- [ ] 后台 30 分钟仍可接收消息
+
+---
+
+#### 迭代 F-4: Dashboard UI + 实时健康展示 + 报警通知
+
+**目标**: 实现主页 Dashboard 实时展示健康数据、报警弹窗和本地通知推送
+
+**变更范围**:
+- 新建 `lib/ui/home_page.dart`
+- 新建 `lib/ui/tabs/dashboard_tab.dart`
+- 新建 `lib/ui/widgets/health_card.dart`
+- 新建 `lib/ui/widgets/alarm_dialog.dart`
+- 新建 `lib/services/notification_service.dart`
+
+**步骤**:
+1. 实现 `HomePage`：BottomNavigationBar 四 Tab 架构（仪表盘/趋势/报警/设置）
+2. 实现 `DashboardTab`：四宫格 HealthCard 展示心率、血氧、环境温度、步数
+3. 实现 `HealthCard` 组件：图标 + 数值 + 单位 + 状态指示（正常/异常/离线）
+4. 实现 `NotificationService`：flutter_local_notifications 初始化、报警通知推送（声音+振动）
+5. 实现 `AlarmDialog`：报警弹窗（类型、数值、时间、远程 ACK 按钮）
+6. 在 `DeviceProvider` 中集成：收到 alarm 消息 → 触发通知 + 弹窗 + 存储
+
+**Dashboard 布局设计**:
+```
+┌─────────────────────────────┐
+│  设备状态栏（在线/离线/电量） │
+├──────────┬──────────────────┤
+│  ❤️ 心率   │  🫁 血氧         │
+│  72 bpm  │  98 %            │
+├──────────┼──────────────────┤
+│  🌡️ 温度   │  🚶 步数         │
+│  36.5°C  │  1,234 步        │
+├──────────┴──────────────────┤
+│  最近报警记录（最新 3 条）    │
+└─────────────────────────────┘
+```
+
+**产出物**:
+- `lib/ui/home_page.dart`
+- `lib/ui/tabs/dashboard_tab.dart`
+- `lib/ui/widgets/health_card.dart`
+- `lib/ui/widgets/alarm_dialog.dart`
+- `lib/services/notification_service.dart`
+
+**验收方法**:
+- `flutter analyze` 无错误
+- Dashboard 四宫格正确显示实时数据
+- 设备在线/离线状态正确切换
+- 收到 alarm 消息时弹窗显示 + 通知栏推送 + 振动
+- App 在后台时报警通知可点击跳转到报警详情
+
+**用户验证清单**:
+- [ ] Dashboard 四宫格数据正确
+- [ ] 设备状态显示正确
+- [ ] 报警弹窗正常弹出
+- [ ] 通知栏报警推送正常
+- [ ] 后台报警通知可跳转
+
+---
+
+#### 迭代 F-5: 趋势图表(24h/7天) + 每日健康摘要 + 异常提示
+
+**目标**: 实现健康趋势折线图、每日摘要卡片和异常数据智能提示
+
+**变更范围**:
+- 新建 `lib/ui/tabs/trend_tab.dart`
+- 新建 `lib/ui/widgets/trend_chart.dart`
+- 新建 `lib/ui/widgets/summary_card.dart`
+- 新建 `lib/ui/widgets/anomaly_tips.dart`
+
+**步骤**:
+1. 实现 `TrendTab`：时间范围切换（24小时/7天），指标切换（心率/血氧/温度/步数）
+2. 实现 `TrendChart`：基于 fl_chart 的折线图，支持 X 轴时间、Y 轴数值、正常/异常区间背景色
+3. 实现 `SummaryCard`：每日健康摘要（平均值、最大最小值、步数总计、报警次数）
+4. 实现 `AnomalyTips`：智能异常提示（如 "今日 14:30 心率达到 125bpm，高于正常范围"）
+5. 在 `HealthAnalysisProvider` 中实现趋势数据查询和 DailySummary 聚合
+6. 数据量大时分页加载，避免 UI 卡顿
+
+**趋势图表设计**:
+```
+┌────────────────────────────────┐
+│  [24小时] [7天]   [心率 ▼]     │
+├────────────────────────────────┤
+│  ┌──────────────────────────┐  │
+│  │  120 ─ ─ ─ ─ ─ ─ ─ ─ ─  │  │ ← 高阈值虚线
+│  │       ╱╲    ╱╲           │  │
+│  │  72 ─╱──╲──╱──╲─────── │  │ ← 数据折线
+│  │     ╱    ╲╱              │  │
+│  │  45 ─ ─ ─ ─ ─ ─ ─ ─ ─  │  │ ← 低阈值虚线
+│  │  00:00  06:00  12:00  18:00│  │
+│  └──────────────────────────┘  │
+├────────────────────────────────┤
+│  📊 今日健康摘要                │
+│  平均心率: 75 bpm | 步数: 3456 │
+│  血氧范围: 96-99% | 报警: 0 次 │
+├────────────────────────────────┤
+│  ⚠️ 异常提示                    │
+│  • 14:30 心率 125bpm（偏高）   │
+│  • 02:15 血氧 89%（低于阈值）  │
+└────────────────────────────────┘
+```
+
+**产出物**:
+- `lib/ui/tabs/trend_tab.dart`
+- `lib/ui/widgets/trend_chart.dart`
+- `lib/ui/widgets/summary_card.dart`
+- `lib/ui/widgets/anomaly_tips.dart`
+
+**验收方法**:
+- `flutter analyze` 无错误
+- 24 小时趋势图正确渲染，数据点密度适中
+- 7 天趋势图以每日聚合展示
+- 阈值线正确显示，异常区间有背景色标注
+- DailySummary 数据与 SQLite 查询结果一致
+- 异常提示正确识别超阈值数据点
+
+**用户验证清单**:
+- [ ] 24小时折线图正确显示
+- [ ] 7天趋势图正确显示
+- [ ] 指标切换正常
+- [ ] 每日摘要数据正确
+- [ ] 异常提示准确
+
+---
+
+#### 迭代 F-6: 报警历史 + 统计图表 + 远程 ACK
+
+**目标**: 实现报警历史列表、按类型统计图表（饼图+柱状图）和远程 ACK 命令
+
+**变更范围**:
+- 新建 `lib/ui/tabs/alarm_tab.dart`
+- 新建 `lib/ui/widgets/alarm_card.dart`
+- 新建 `lib/ui/widgets/alarm_stats.dart`
+
+**步骤**:
+1. 实现 `AlarmTab`：报警历史列表（按时间倒序）+ 顶部统计区域
+2. 实现 `AlarmCard`：单条报警卡片（类型图标、描述、时间、ACK 状态、操作按钮）
+3. 实现 `AlarmStats`：
+   - 饼图：按报警类型分布（fl_chart PieChart）
+   - 柱状图：近 7 天每日报警次数（fl_chart BarChart）
+4. 实现远程 ACK 功能：点击 ACK 按钮 → 发布 `careband/{id}/cmd` 消息（cmd_type=0x01）→ 更新本地状态
+5. 报警列表支持筛选（全部/未确认/按类型）和分页加载
+6. 在 `DeviceProvider` 中添加 cmd 发布方法
+
+**远程 ACK 命令格式**:
+```json
+Topic: careband/{device_id}/cmd
+Payload: {
+  "cmd_type": 1,
+  "event_id": 12345,
+  "source": "family_app",
+  "timestamp": 1234567890
+}
+```
+
+**产出物**:
+- `lib/ui/tabs/alarm_tab.dart`
+- `lib/ui/widgets/alarm_card.dart`
+- `lib/ui/widgets/alarm_stats.dart`
+
+**验收方法**:
+- `flutter analyze` 无错误
+- 报警历史列表正确展示，按时间倒序
+- 饼图正确展示各类型报警占比
+- 柱状图正确展示近 7 天每日报警次数
+- 点击 ACK 按钮后本地状态更新为已确认
+- ACK 命令成功发布到 MQTT（MQTT Explorer 可见）
+- 筛选和分页功能正常
+
+**用户验证清单**:
+- [ ] 报警历史列表正确
+- [ ] 饼图统计正确
+- [ ] 柱状图统计正确
+- [ ] 远程 ACK 功能正常
+- [ ] 筛选和分页正常
+
+---
+
+#### 迭代 F-7: 设置页 + UI 精修 + 端到端联调
+
+**目标**: 实现设置页面、整体 UI 精修美化、完整端到端联调验证
+
+**变更范围**:
+- 新建 `lib/ui/tabs/settings_tab.dart`
+- 修改全局主题配置
+- 修改各 Tab/Widget 样式
+- 全模块联调
+
+**步骤**:
+1. 实现 `SettingsTab`：
+   - 设备管理（解绑/重新绑定 device_id）
+   - MQTT 连接状态显示
+   - 通知开关（报警通知/振动/铃声）
+   - 数据存储管理（手动清理/存储空间占用显示）
+   - 关于页面（版本号、项目信息）
+2. Material 3 主题精修：
+   - 统一配色方案（健康绿、报警红、信息蓝）
+   - 卡片圆角、阴影、间距统一
+   - 深色模式支持（可选）
+3. UI 细节优化：
+   - 加载状态 Shimmer 效果
+   - 空状态占位图
+   - 数据刷新下拉动画
+   - 过渡动画
+4. 端到端联调：
+   - 手环 → 网关 App（BLE）→ EMQX Cloud（MQTT）→ 家属 App
+   - 验证 telemetry/alarm/status/lwt 全链路
+   - 验证多台家属手机同时订阅
+   - 验证后台 30 分钟以上仍能收到报警通知
+5. 性能验证：
+   - APK 大小 < 150MB
+   - 冷启动时间 < 3 秒
+   - 7 天数据量下列表滚动流畅
+
+**产出物**:
+- `lib/ui/tabs/settings_tab.dart`
+- 修改后的全局主题和各组件样式
+- 端到端联调测试报告
+
+**验收方法**:
+- `flutter analyze` 无错误
+- `flutter test` 全部通过
+- 端到端联调：手环发送报警 → 网关转发 → 家属 App 收到通知 + 弹窗
+- 多设备同时订阅不冲突
+- 后台保活 30 分钟以上正常
+- APK < 150MB
+- UI 符合 Material 3 规范，无明显违和感
+
+**用户验证清单**:
+- [ ] 设置页功能完整
+- [ ] 解绑/重新绑定正常
+- [ ] 通知开关生效
+- [ ] UI 整体美观统一
+- [ ] 端到端联调通过
+- [ ] 多设备同时订阅正常
+- [ ] 后台 30 分钟保活正常
+- [ ] APK < 150MB
+
+---
+
+### P2-6 项目文件结构
+
+```
+family_flutter/
+├── android/
+│   └── app/src/main/kotlin/com/careband/family/
+│       ├── MainActivity.kt
+│       └── MqttKeepAliveService.kt
+├── assets/
+│   └── CA/
+│       └── emqxsl-ca.crt
+├── lib/
+│   ├── main.dart
+│   ├── mqtt/
+│   │   ├── mqtt_subscriber.dart
+│   │   └── mqtt_config.dart          (gitignored)
+│   ├── data/
+│   │   ├── models.dart
+│   │   ├── database_helper.dart
+│   │   └── family_repository.dart
+│   ├── providers/
+│   │   ├── device_provider.dart
+│   │   └── health_analysis_provider.dart
+│   ├── services/
+│   │   └── notification_service.dart
+│   └── ui/
+│       ├── binding_page.dart
+│       ├── home_page.dart
+│       ├── tabs/
+│       │   ├── dashboard_tab.dart
+│       │   ├── trend_tab.dart
+│       │   ├── alarm_tab.dart
+│       │   └── settings_tab.dart
+│       └── widgets/
+│           ├── health_card.dart
+│           ├── trend_chart.dart
+│           ├── summary_card.dart
+│           ├── anomaly_tips.dart
+│           ├── alarm_card.dart
+│           └── alarm_stats.dart
+├── test/
+│   ├── data/
+│   │   ├── models_test.dart
+│   │   ├── database_helper_test.dart
+│   │   └── family_repository_test.dart
+│   └── providers/
+│       └── device_provider_test.dart
+├── pubspec.yaml
+└── .gitignore
+```
+
+---
+
+### P2-7 依赖清单
+
+| 依赖包 | 用途 | 备注 |
+|--------|------|------|
+| mqtt_client | MQTT 5.0 客户端，TLS 连接 | 核心依赖 |
+| provider | 状态管理（ChangeNotifier） | 复用网关 App 模式 |
+| sqflite | SQLite 本地存储 | 7 天数据持久化 |
+| fl_chart | 折线图、饼图、柱状图 | 趋势和统计展示 |
+| flutter_local_notifications | 本地通知推送 | 报警通知 |
+| intl | 日期时间格式化 | 中文日期展示 |
+| permission_handler | 运行时权限请求 | 通知权限 |
+| shared_preferences | 轻量 KV 存储 | device_id 等配置缓存 |
+| path | 文件路径处理 | SQLite 数据库路径 |
+
+**注意**：无 BLE 相关依赖（flutter_blue_plus 等），家属 App 纯 MQTT 通信。
+
+---
+
+### P2-8 风险清单与对策
+
+| 风险 | 影响 | 对策 |
+|------|------|------|
+| **Android OEM 后台杀进程** | 前台服务被系统杀死，报警遗漏 | 1. 使用前台服务 + 常驻通知<br>2. 引导用户关闭电池优化<br>3. 自动重连机制 |
+| **EMQX Cloud 免费层连接数限制** | 多台家属手机可能超出限制 | 1. 使用唯一 client_id 避免冲突<br>2. 控制同时在线设备数<br>3. 监控连接数指标 |
+| **Retained 消息过期/缺失** | 家属 App 启动时无法获取最新状态 | 1. 订阅 status retained 消息<br>2. 启动后主动请求状态<br>3. 显示 "等待数据" 占位 |
+| **MQTT 消息延迟** | 报警通知不及时 | 1. alarm 使用 QoS 1<br>2. 监控消息延迟<br>3. 界面显示消息时间戳 |
+| **SQLite 数据量过大** | App 卡顿、存储空间不足 | 1. 7 天自动清理<br>2. 分页查询<br>3. 显示存储占用 |
+| **网络切换导致 MQTT 断连** | WiFi/移动网络切换时断连 | 1. 自动重连策略（指数退避）<br>2. 网络状态监听<br>3. 断连状态 UI 提示 |
+
+---
+
+### P2-9 验证方式
+
+- 每个迭代均包含 `flutter analyze` + `flutter test` 验收
+- F-7 迭代执行端到端联调：手环 → 网关 App（BLE）→ EMQX Cloud（MQTT）→ 家属 App
+- 验证多台家属手机同时订阅
+- 验证后台 30 分钟以上仍能收到报警通知
+- 验证 APK < 150MB

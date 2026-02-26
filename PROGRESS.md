@@ -25,6 +25,7 @@
 | Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | ✅ 已完成 | 2026-02-21 |
 | Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | ✅ 已完成 | 2026-02-21 |
 | Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | ✅ 已完成 | 2026-02-22 |
+| Phase 2 | 开发计划制定：家属远程监护 App | ✅ 已完成 | 2026-02-25 |
 
 ## 详细记录
 
@@ -425,3 +426,16 @@
   - **错误反馈**: `alarm_tab.dart` 的确认按钮增加 SnackBar 失败提示
 - **关键文件**: lib/main.dart, lib/ui/device_page.dart, lib/data/ble_provider.dart, lib/ui/tabs/alarm_tab.dart
 - **附带修复**: ISSUE-flutter-017, ISSUE-flutter-018
+
+---
+
+### 2026-02-25 - Phase 2 开发计划制定：家属远程监护 App
+
+- **迭代**: Phase 2 计划
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 在 `development_plan.md` 中新增 Phase 2 章节（P2-1 ~ P2-9）
+  - 包含：模块边界表、数据模型定义、SQLite Schema、7 个迭代详细计划（F-1 ~ F-7）、项目文件结构、依赖清单、风险清单、验证方式
+  - 家属 App 为全新独立 Flutter 项目（`family_flutter/`），纯 MQTT 订阅，不依赖 BLE
+- **关键文件**: development_plan.md, PROGRESS.md
+- **验收状态**: 待验收
