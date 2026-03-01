@@ -263,8 +263,8 @@
 
 | 特征名 | UUID | 属性 | 字段 | 编码 | 单位 | 触发条件 |
 |-------|------|------|------|------|------|---------|
-| Telemetry | `0000FF01-...` | Notify | temp, heart_rate, spo2, steps, battery, timestamp | Little-Endian Binary | °C×10, bpm, %, count, %, Unix秒 | 常规每8分钟；任一传感器进入实时检测时每16秒 |
-| Alarm | `0000FF02-...` | Notify | event_id, alarm_type, value, timestamp, battery | Little-Endian Binary | - | 报警触发时立即 |
+| Telemetry | `0000FF01-...` | Notify | temp, heart_rate, spo2, steps, data_valid, timestamp | Little-Endian Binary | °C×10, bpm, %, count, bitmap, Unix秒 | 常规每8分钟；任一传感器进入实时检测时每16秒 |
+| Alarm | `0000FF02-...` | Notify | event_id, alarm_type, value, timestamp | Little-Endian Binary | - | 报警触发时立即 |
 | Command | `0000FF03-...` | Write | cmd_type, payload | Little-Endian Binary | - | App 写入 |
 | Status | `0000FF04-...` | Read | device_state, ble_conn_count, alarm_state | Little-Endian Binary | - | App 主动读取 |
 
@@ -318,8 +318,7 @@ Offset  Size  Field        Type      Description
   "temp": 36.5,
   "heart_rate": 72,
   "spo2": 98,
-  "steps": 1234,
-  "battery": 85
+  "steps": 1234
 }
 ```
 
@@ -330,8 +329,7 @@ Offset  Size  Field        Type      Description
   "event_id": 12345,
   "alarm_type": "fall",
   "value": 0,
-  "timestamp": 1234567890,
-  "battery": 85
+  "timestamp": 1234567890
 }
 ```
 
@@ -364,7 +362,7 @@ Offset  Size  Field        Type      Description
 | 项目 | 方案 |
 |------|------|
 | 缓存位置 | RAM 环形队列（默认 `N=16` 条） |
-| 单条内容 | event_id、alarm_type、value、timestamp、battery、retry_count、acked |
+| 单条内容 | event_id、alarm_type、value、timestamp、retry_count、acked |
 | 补发时机 | BLE 重连后先补发未 ACK 告警，再恢复实时上报 |
 | 重发策略 | 固定间隔 2 秒，最多 5 次；超过次数保留待手动查询 |
 | 满队列策略 | 丢弃最旧未 ACK 记录并打印告警日志 |
@@ -1059,7 +1057,7 @@ I2C device found at 0x68 (DS3231)
 **步骤**:
 1. 完整流程测试（传感器→显示→BLE→App→云端）
 2. 报警流程测试（各类报警触发→通知→ACK）
-3. 异常场景测试（断连、重连、低电量）
+3. 异常场景测试（断连、重连）
 4. 性能和稳定性测试
 5. 问题修复和优化
 
@@ -1329,7 +1327,6 @@ class TelemetryRecord {
   final int heartRate;      // 心率 bpm
   final int spo2;           // 血氧 %
   final int steps;          // 步数
-  final int battery;        // 电量 %
   final DateTime timestamp; // 设备时间戳
   final DateTime receivedAt;// 本地接收时间
 }
@@ -1343,7 +1340,6 @@ class AlarmRecord {
   final int eventId;        // 唯一事件 ID
   final FamilyAlarmType alarmType; // 报警类型
   final double value;       // 触发值
-  final int battery;        // 电量 %
   final DateTime timestamp; // 设备时间戳
   final DateTime receivedAt;// 本地接收时间
   final bool acknowledged;  // 是否已远程 ACK
@@ -1373,7 +1369,6 @@ class DeviceStatusRecord {
   final String deviceId;
   final bool online;        // 设备是否在线（LWT / status）
   final DateTime lastSeen;  // 最后一次收到消息的时间
-  final int? battery;       // 最近电量
 }
 ```
 
@@ -1407,7 +1402,6 @@ CREATE TABLE telemetry (
   heart_rate  INTEGER NOT NULL,
   spo2        INTEGER NOT NULL,
   steps       INTEGER NOT NULL,
-  battery     INTEGER NOT NULL,
   timestamp   INTEGER NOT NULL,  -- Unix 秒（设备端）
   received_at INTEGER NOT NULL   -- Unix 毫秒（本地）
 );
@@ -1422,7 +1416,6 @@ CREATE TABLE alarm (
   event_id    INTEGER NOT NULL,
   alarm_type  INTEGER NOT NULL,
   value       REAL    NOT NULL,
-  battery     INTEGER NOT NULL,
   timestamp   INTEGER NOT NULL,
   received_at INTEGER NOT NULL,
   acknowledged INTEGER NOT NULL DEFAULT 0,
@@ -1628,7 +1621,7 @@ MethodChannel: com.careband.family/keepalive
 **Dashboard 布局设计**:
 ```
 ┌─────────────────────────────┐
-│  设备状态栏（在线/离线/电量） │
+│  设备状态栏（在线/离线）      │
 ├──────────┬──────────────────┤
 │  ❤️ 心率   │  🫁 血氧         │
 │  72 bpm  │  98 %            │

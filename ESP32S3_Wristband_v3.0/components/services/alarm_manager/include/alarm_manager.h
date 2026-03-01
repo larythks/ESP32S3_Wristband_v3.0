@@ -58,7 +58,6 @@ typedef struct {
     uint8_t  alarm_type;
     int16_t  value;
     uint32_t timestamp;
-    uint8_t  battery;
     uint8_t  retry_count;
     bool     acked;
     bool     valid;

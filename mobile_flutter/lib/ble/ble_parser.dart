@@ -7,7 +7,7 @@ class BleParser {
   /// Offset 2:  uint8  heart_rate
   /// Offset 3:  uint8  spo2
   /// Offset 4:  uint32 steps -> getUint32(4, Endian.little)
-  /// Offset 8:  uint8  battery
+  /// Offset 8:  uint8  reserved (原 battery，已移除)
   /// Offset 9:  uint8  data_valid
   /// Offset 10: uint32 timestamp -> getUint32(10, Endian.little)
   static TelemetryData? parseTelemetry(List<int> raw) {
@@ -18,7 +18,6 @@ class BleParser {
       heartRate: raw[2],
       spo2: raw[3],
       steps: bd.getUint32(4, Endian.little),
-      battery: raw[8],
       dataValid: raw[9],
       timestamp: DateTime.fromMillisecondsSinceEpoch(
           bd.getUint32(10, Endian.little) * 1000),
@@ -29,7 +28,7 @@ class BleParser {
   /// Offset 0: uint32 event_id
   /// Offset 4: uint8  alarm_type
   /// Offset 5: int16  value / 10.0
-  /// Offset 7: uint8  battery
+  /// Offset 7: uint8  reserved (原 battery，已移除)
   /// Offset 8: uint32 timestamp
   static AlarmData? parseAlarm(List<int> raw) {
     if (raw.length < 12) return null;
@@ -38,7 +37,6 @@ class BleParser {
       eventId: bd.getUint32(0, Endian.little),
       alarmType: AlarmType.fromCode(raw[4]),
       triggerValue: bd.getInt16(5, Endian.little) / 10.0,
-      battery: raw[7],
       timestamp: DateTime.fromMillisecondsSinceEpoch(
           bd.getUint32(8, Endian.little) * 1000),
     );

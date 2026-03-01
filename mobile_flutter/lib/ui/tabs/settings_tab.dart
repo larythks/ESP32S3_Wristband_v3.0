@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/ble_provider.dart';
+import '../../data/sqlite_repository.dart';
 
 /// 设置页面
 class SettingsTab extends StatelessWidget {
@@ -83,9 +84,6 @@ class SettingsTab extends StatelessWidget {
   Widget _buildDeviceInfoCard(BuildContext context, BleProvider ble) {
     final isConnected = ble.isConnected;
     final deviceName = ble.connectedDeviceName ?? 'CareBand';
-    final batteryText = ble.latestTelemetry != null
-        ? '${ble.latestTelemetry!.battery}%'
-        : '--';
 
     return Card(
       elevation: 1,
@@ -101,8 +99,6 @@ class SettingsTab extends StatelessWidget {
             _buildConnectionRow(context, isConnected),
             const Divider(height: 24),
             _buildCloudRow(context, ble.mqttConnected, isConnected),
-            const Divider(height: 24),
-            _buildInfoRow(context, '电量', batteryText),
           ],
         ),
       ),
@@ -244,6 +240,61 @@ class SettingsTab extends StatelessWidget {
                 );
               }
             },
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          ListTile(
+            leading: const Icon(Icons.delete_forever, color: _errorColor),
+            title: const Text(
+              '清除所有数据',
+              style: TextStyle(color: _errorColor),
+            ),
+            trailing: const Icon(Icons.chevron_right, color: _errorColor),
+            onTap: () => _showClearAllDataDialog(context, ble),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showClearAllDataDialog(BuildContext context, BleProvider ble) {
+    final repository = SqliteDataRepository();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          '清除所有数据',
+          style: TextStyle(color: _errorColor),
+        ),
+        content: const Text(
+          '此操作将永久删除所有本地数据，包括：\n\n'
+          '• 所有遥测记录\n'
+          '• 所有报警记录（包括未确认的）\n\n'
+          '此操作不可恢复，是否继续？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _errorColor,
+            ),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              final result = await repository.clearAllData();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      '已清除：遥测 ${result['telemetry']} 条，报警 ${result['alarm']} 条',
+                    ),
+                  ),
+                );
+              }
+            },
+            child: const Text('确认清除'),
           ),
         ],
       ),

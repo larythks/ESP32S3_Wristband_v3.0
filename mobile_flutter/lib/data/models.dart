@@ -35,7 +35,6 @@ class TelemetryData {
   final int heartRate;
   final int spo2;
   final int steps;
-  final int battery;
   final int dataValid;
   final DateTime timestamp;
 
@@ -44,7 +43,6 @@ class TelemetryData {
     required this.heartRate,
     required this.spo2,
     required this.steps,
-    required this.battery,
     required this.dataValid,
     required this.timestamp,
   });
@@ -61,7 +59,7 @@ class TelemetryData {
   @override
   String toString() =>
       'TelemetryData(temp=$temperature°C, hr=$heartRate, spo2=$spo2%, '
-      'steps=$steps, battery=$battery%, valid=0x${dataValid.toRadixString(16)})';
+      'steps=$steps, valid=0x${dataValid.toRadixString(16)})';
 }
 
 /// Alarm 报警事件（对应 BLE Alarm 特征 FF02, 16 bytes）
@@ -69,7 +67,6 @@ class AlarmData {
   final int eventId;
   final AlarmType alarmType;
   final double triggerValue;
-  final int battery;
   final DateTime timestamp;
   bool isAcked;
 
@@ -77,7 +74,6 @@ class AlarmData {
     required this.eventId,
     required this.alarmType,
     required this.triggerValue,
-    required this.battery,
     required this.timestamp,
     this.isAcked = false,
   });

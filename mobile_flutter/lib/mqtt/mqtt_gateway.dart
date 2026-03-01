@@ -163,7 +163,6 @@ class MqttGateway {
         'heart_rate': data.heartRate,
         'spo2': data.spo2,
         'steps': data.steps,
-        'battery': data.battery,
       });
 
       final msgId = _publish(MqttConfig.telemetryTopic, payload, MqttQos.atMostOnce, false);
@@ -188,7 +187,6 @@ class MqttGateway {
         'alarm_type': typeStr,
         'value': data.triggerValue,
         'timestamp': data.timestamp.millisecondsSinceEpoch ~/ 1000,
-        'battery': data.battery,
       });
 
       final msgId = _publish(MqttConfig.alarmTopic, payload, MqttQos.atLeastOnce, false);
