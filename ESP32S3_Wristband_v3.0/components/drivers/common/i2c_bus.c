@@ -9,56 +9,109 @@
 #include "freertos/semphr.h"
 
 static const char *TAG = "i2c_bus";
-static bool s_i2c_initialized = false;
-static SemaphoreHandle_t s_i2c_mutex = NULL;
+static bool s_i2c_initialized[2] = {false, false};
+static SemaphoreHandle_t s_i2c_mutex[2] = {NULL, NULL};
 
+/* ---------- 内部：根据 port 获取互斥锁索引 ---------- */
+static inline int port_idx(i2c_port_t port)
+{
+    return (port == I2C_NUM_1) ? 1 : 0;
+}
+
+/* ---------- Bus 0 初始化 (MAX30102 + MPU6050) ---------- */
 esp_err_t i2c_bus_init(void)
 {
-    if (s_i2c_initialized) {
-        ESP_LOGW(TAG, "I2C bus already initialized");
+    int idx = port_idx(I2C_BUS0_NUM);
+    if (s_i2c_initialized[idx]) {
+        ESP_LOGW(TAG, "I2C bus0 already initialized");
         return ESP_OK;
     }
 
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_MASTER_SDA_IO,
-        .scl_io_num = I2C_MASTER_SCL_IO,
+        .sda_io_num = I2C_BUS0_SDA,
+        .scl_io_num = I2C_BUS0_SCL,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
         .master.clk_speed = I2C_MASTER_FREQ_HZ,
     };
 
-    esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
+    esp_err_t ret = i2c_param_config(I2C_BUS0_NUM, &conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C param config failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "I2C bus0 param config failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    ret = i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0);
+    ret = i2c_driver_install(I2C_BUS0_NUM, conf.mode, 0, 0, 0);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C driver install failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "I2C bus0 driver install failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    s_i2c_initialized = true;
+    s_i2c_initialized[idx] = true;
 
-    if (s_i2c_mutex == NULL) {
-        s_i2c_mutex = xSemaphoreCreateMutex();
-        if (s_i2c_mutex == NULL) {
-            ESP_LOGE(TAG, "Failed to create I2C mutex");
+    if (s_i2c_mutex[idx] == NULL) {
+        s_i2c_mutex[idx] = xSemaphoreCreateMutex();
+        if (s_i2c_mutex[idx] == NULL) {
+            ESP_LOGE(TAG, "Failed to create I2C bus0 mutex");
             return ESP_ERR_NO_MEM;
         }
     }
 
-    ESP_LOGI(TAG, "I2C bus initialized (SDA=%d, SCL=%d, freq=%dHz)",
-             I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO, I2C_MASTER_FREQ_HZ);
-
+    ESP_LOGI(TAG, "I2C bus0 initialized (SDA=%d, SCL=%d, freq=%dHz)",
+             I2C_BUS0_SDA, I2C_BUS0_SCL, I2C_MASTER_FREQ_HZ);
     return ESP_OK;
 }
 
-void i2c_bus_scan(void)
+/* ---------- Bus 1 初始化 (SH1106 OLED + DS3231 RTC) ---------- */
+esp_err_t i2c_bus1_init(void)
 {
-    ESP_LOGI(TAG, "Scanning I2C bus...");
+    int idx = port_idx(I2C_BUS1_NUM);
+    if (s_i2c_initialized[idx]) {
+        ESP_LOGW(TAG, "I2C bus1 already initialized");
+        return ESP_OK;
+    }
+
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_BUS1_SDA,
+        .scl_io_num = I2C_BUS1_SCL,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+    };
+
+    esp_err_t ret = i2c_param_config(I2C_BUS1_NUM, &conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus1 param config failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = i2c_driver_install(I2C_BUS1_NUM, conf.mode, 0, 0, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus1 driver install failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    s_i2c_initialized[idx] = true;
+
+    if (s_i2c_mutex[idx] == NULL) {
+        s_i2c_mutex[idx] = xSemaphoreCreateMutex();
+        if (s_i2c_mutex[idx] == NULL) {
+            ESP_LOGE(TAG, "Failed to create I2C bus1 mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    ESP_LOGI(TAG, "I2C bus1 initialized (SDA=%d, SCL=%d, freq=%dHz)",
+             I2C_BUS1_SDA, I2C_BUS1_SCL, I2C_MASTER_FREQ_HZ);
+    return ESP_OK;
+}
+
+/* ---------- 通用扫描（按 port） ---------- */
+static void i2c_bus_scan_port(i2c_port_t port, const char *bus_name)
+{
+    ESP_LOGI(TAG, "Scanning %s ...", bus_name);
     uint8_t device_count = 0;
 
     for (uint8_t addr = 1; addr < 127; addr++) {
@@ -67,7 +120,7 @@ void i2c_bus_scan(void)
         i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
         i2c_master_stop(cmd);
 
-        esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd,
+        esp_err_t ret = i2c_master_cmd_begin(port, cmd,
                                               pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
         i2c_cmd_link_delete(cmd);
 
@@ -78,17 +131,32 @@ void i2c_bus_scan(void)
             else if (addr == 0x3C) name = "SH1106";
             else if (addr == 0x68) name = "DS3231";
 
-            ESP_LOGI(TAG, "I2C device found at 0x%02X (%s)", addr, name);
+            ESP_LOGI(TAG, "[%s] device found at 0x%02X (%s)", bus_name, addr, name);
             device_count++;
         }
     }
 
-    ESP_LOGI(TAG, "I2C scan complete. Found %d device(s)", device_count);
+    ESP_LOGI(TAG, "[%s] scan complete. Found %d device(s)", bus_name, device_count);
 }
 
-esp_err_t i2c_bus_write(uint8_t dev_addr, uint8_t reg_addr, const uint8_t *data, size_t len)
+void i2c_bus_scan(void)
 {
-    if (s_i2c_mutex && xSemaphoreTake(s_i2c_mutex, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS)) != pdTRUE) {
+    i2c_bus_scan_port(I2C_BUS0_NUM, "Bus0");
+}
+
+void i2c_bus1_scan(void)
+{
+    i2c_bus_scan_port(I2C_BUS1_NUM, "Bus1");
+}
+
+/* ========== 带 port 参数的核心读写 ========== */
+
+esp_err_t i2c_bus_write_port(i2c_port_t port, uint8_t dev_addr, uint8_t reg_addr,
+                             const uint8_t *data, size_t len)
+{
+    int idx = port_idx(port);
+    if (s_i2c_mutex[idx] &&
+        xSemaphoreTake(s_i2c_mutex[idx], pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -101,23 +169,26 @@ esp_err_t i2c_bus_write(uint8_t dev_addr, uint8_t reg_addr, const uint8_t *data,
     }
     i2c_master_stop(cmd);
 
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd,
+    esp_err_t ret = i2c_master_cmd_begin(port, cmd,
                                           pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
 
-    if (s_i2c_mutex) {
-        xSemaphoreGive(s_i2c_mutex);
+    if (s_i2c_mutex[idx]) {
+        xSemaphoreGive(s_i2c_mutex[idx]);
     }
     return ret;
 }
 
-esp_err_t i2c_bus_read(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, size_t len)
+esp_err_t i2c_bus_read_port(i2c_port_t port, uint8_t dev_addr, uint8_t reg_addr,
+                            uint8_t *data, size_t len)
 {
     if (data == NULL || len == 0) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (s_i2c_mutex && xSemaphoreTake(s_i2c_mutex, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS)) != pdTRUE) {
+    int idx = port_idx(port);
+    if (s_i2c_mutex[idx] &&
+        xSemaphoreTake(s_i2c_mutex[idx], pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -133,40 +204,76 @@ esp_err_t i2c_bus_read(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, size_t
     i2c_master_read_byte(cmd, data + len - 1, I2C_MASTER_NACK);
     i2c_master_stop(cmd);
 
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd,
+    esp_err_t ret = i2c_master_cmd_begin(port, cmd,
                                           pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
 
-    if (s_i2c_mutex) {
-        xSemaphoreGive(s_i2c_mutex);
+    if (s_i2c_mutex[idx]) {
+        xSemaphoreGive(s_i2c_mutex[idx]);
     }
     return ret;
 }
 
-esp_err_t i2c_bus_write_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
+esp_err_t i2c_bus_write_byte_port(i2c_port_t port, uint8_t dev_addr,
+                                  uint8_t reg_addr, uint8_t data)
 {
-    return i2c_bus_write(dev_addr, reg_addr, &data, 1);
+    return i2c_bus_write_port(port, dev_addr, reg_addr, &data, 1);
 }
 
-esp_err_t i2c_bus_read_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data)
+esp_err_t i2c_bus_read_byte_port(i2c_port_t port, uint8_t dev_addr,
+                                 uint8_t reg_addr, uint8_t *data)
 {
-    return i2c_bus_read(dev_addr, reg_addr, data, 1);
+    return i2c_bus_read_port(port, dev_addr, reg_addr, data, 1);
 }
 
-esp_err_t i2c_bus_lock(uint32_t timeout_ms)
+esp_err_t i2c_bus_lock_port(i2c_port_t port, uint32_t timeout_ms)
 {
-    if (s_i2c_mutex == NULL) {
+    int idx = port_idx(port);
+    if (s_i2c_mutex[idx] == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(s_i2c_mutex, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+    if (xSemaphoreTake(s_i2c_mutex[idx], pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     return ESP_OK;
 }
 
+void i2c_bus_unlock_port(i2c_port_t port)
+{
+    int idx = port_idx(port);
+    if (s_i2c_mutex[idx] != NULL) {
+        xSemaphoreGive(s_i2c_mutex[idx]);
+    }
+}
+
+/* ========== 向后兼容包装 (默认 Bus 0) ========== */
+
+esp_err_t i2c_bus_write(uint8_t dev_addr, uint8_t reg_addr, const uint8_t *data, size_t len)
+{
+    return i2c_bus_write_port(I2C_BUS0_NUM, dev_addr, reg_addr, data, len);
+}
+
+esp_err_t i2c_bus_read(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, size_t len)
+{
+    return i2c_bus_read_port(I2C_BUS0_NUM, dev_addr, reg_addr, data, len);
+}
+
+esp_err_t i2c_bus_write_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
+{
+    return i2c_bus_write_byte_port(I2C_BUS0_NUM, dev_addr, reg_addr, data);
+}
+
+esp_err_t i2c_bus_read_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data)
+{
+    return i2c_bus_read_byte_port(I2C_BUS0_NUM, dev_addr, reg_addr, data);
+}
+
+esp_err_t i2c_bus_lock(uint32_t timeout_ms)
+{
+    return i2c_bus_lock_port(I2C_BUS0_NUM, timeout_ms);
+}
+
 void i2c_bus_unlock(void)
 {
-    if (s_i2c_mutex != NULL) {
-        xSemaphoreGive(s_i2c_mutex);
-    }
+    i2c_bus_unlock_port(I2C_BUS0_NUM);
 }

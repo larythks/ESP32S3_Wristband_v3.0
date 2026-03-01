@@ -153,16 +153,24 @@ void app_main(void)
         return;
     }
 
-    // 初始化 I2C 总线
+    // 初始化 I2C Bus 0 (MAX30102 + MPU6050，原接线)
     ret = i2c_bus_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C bus init failed!");
+        ESP_LOGE(TAG, "I2C bus0 init failed!");
+        return;
+    }
+
+    // 初始化 I2C Bus 1 (SH1106 OLED + DS3231 RTC，新接线)
+    ret = i2c_bus1_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus1 init failed!");
         return;
     }
 
     // 扫描 I2C 设备
     vTaskDelay(pdMS_TO_TICKS(100));
     i2c_bus_scan();
+    i2c_bus1_scan();
 
     // 初始化 MPU6050
     ret = mpu6050_init();
