@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 // I2C 总线通用配置
-#define I2C_MASTER_FREQ_HZ      400000
+#define I2C_MASTER_FREQ_HZ      100000
 #define I2C_MASTER_TIMEOUT_MS   100
 
 // Bus 0: 心率 (MAX30102) + 运动 (MPU6050)  — 保持原接线

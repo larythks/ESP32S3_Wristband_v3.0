@@ -555,75 +555,45 @@
   - flutter analyze 验证通过，零 error
   - flutter test 冒烟测试通过
 - **关键文件**: lib/ui/tabs/settings_tab.dart, lib/ui/home_page.dart
-- **验收状态**: 待验收
 
 ---
 
 ### 2026-03-01 - 迭代 F-UI: 设计系统重构 + UI/UX 全面改进
 
-- **迭代**: Phase 2 - UI/UX 重构
+- **迭代**: Phase 2 - 迭代 F-UI
 - **状态**: ✅ 已完成
 - **主要改动**:
-  - **阶段 1 - 颜色集中管理**: 新增 `AppColors` 语义化颜色常量类，替换全项目 10+ 文件中的硬编码 Color 值。状态色优化（Emerald-600/Red-600/Gray-500），报警类型色区分化（跌倒紫/温度琥珀/血氧蓝）
-  - **阶段 2 - 无障碍性**: 全部关键 UI 组件添加 `Semantics` widget（HealthCard、AlarmCard、AlarmDialog、DeviceStatusBar、TrendChart、SummaryCard、AnomalyTip），图表添加 `excludeSemantics` + 描述性 label，FilterChip/ACK 按钮触控目标增大至 48dp
-  - **阶段 3 - 加载状态**: DeviceProvider 和 HealthAnalysisProvider 新增 `isLoading`/`isLoadingTrend`/`isLoadingStats` 状态标志，refreshHistory/loadTrendData/loadAlarmStats 使用 try/catch/finally 模式
-  - **阶段 4 - 动效体验**: 新增 `AnimatedListItem` 交错入场动画组件（fade+slide-up），应用于 HealthCard 网格、报警列表、摘要卡片、设置页各节；HealthCard 数值使用 `AnimatedSwitcher` 平滑切换；报警统计展开/收起改用 `AnimatedCrossFade`；页面路由添加 `FadeUpwardsPageTransitionsBuilder`
-  - **阶段 5 - 代码质量**: 新增 `formatters.dart` 工具函数集（6 个格式化函数），消除 4+ 文件中重复的 `_formatTime`/`_pad`/`_formatSteps`；新增 `AppTheme` 主题构建器（含 Google Fonts: JetBrains Mono 数据字体 + Noto Sans SC 中文正文）；移除冗余 Card shape 声明；改进空状态设计
-- **关键文件**:
-  - 新增: `lib/theme/app_colors.dart`, `lib/theme/app_theme.dart`, `lib/utils/formatters.dart`, `lib/ui/widgets/animated_list_item.dart`
-  - 修改: `lib/main.dart`, `pubspec.yaml`, `lib/data/models.dart`, `lib/ui/tabs/dashboard_tab.dart`, `lib/ui/widgets/health_card.dart`, `lib/ui/tabs/trend_tab.dart`, `lib/ui/widgets/trend_chart.dart`, `lib/ui/widgets/summary_card.dart`, `lib/ui/widgets/anomaly_tips.dart`, `lib/ui/tabs/alarm_tab.dart`, `lib/ui/widgets/alarm_card.dart`, `lib/ui/widgets/alarm_dialog.dart`, `lib/ui/widgets/alarm_stats.dart`, `lib/ui/tabs/settings_tab.dart`, `lib/ui/binding_page.dart`, `lib/providers/device_provider.dart`, `lib/providers/health_analysis_provider.dart`
-- **验收状态**: 待验收
-  - `flutter analyze` ✅ 0 issues
+  - 新增 `AppColors` 与 `AppTheme`，集中管理语义化颜色、Material 3 主题和字体配置，替换全项目硬编码颜色值
+  - 为 HealthCard、AlarmCard、AlarmDialog、TrendChart、SummaryCard 等关键组件补充 `Semantics` 描述，并增大 FilterChip 与 ACK 按钮触控区域
+  - `DeviceProvider` 和 `HealthAnalysisProvider` 新增加载状态标志，历史、趋势和统计数据加载流程统一为 `try/catch/finally`
+  - 新增 `AnimatedListItem`，并将 `AnimatedSwitcher`、`AnimatedCrossFade`、`FadeUpwardsPageTransitionsBuilder` 应用于数值切换、列表展示和页面路由
+  - 新增 `formatters.dart` 工具函数集，消除重复格式化逻辑，同时优化空状态设计和冗余 Card 样式声明
+- **关键文件**: lib/theme/app_colors.dart, lib/theme/app_theme.dart, lib/utils/formatters.dart, lib/ui/widgets/animated_list_item.dart, lib/ui/tabs/, lib/ui/widgets/, lib/providers/, lib/main.dart, pubspec.yaml
 
 ---
 
 ### 2026-03-01 - 迭代 F-UI-ALIGN: family_flutter UI 与 mobile_flutter 风格对齐
 
-- **迭代**: Phase 2 - UI 风格统一
+- **迭代**: Phase 2 - 迭代 F-UI-ALIGN
 - **状态**: ✅ 已完成
 - **主要改动**:
-  - **颜色对齐**: 指标色系从鲜亮色（EF4444/3B82F6/F59E0B）统一为 mobile 的柔和色系（E63946/457B9D/F4A261/45B7A0），新增 textPrimary/textSecondary 文本色常量
-  - **主题对齐**: Card elevation 从 1 统一为 1.5 + 0.08 alpha shadow，移除 JetBrains Mono 标题字体改为 Noto Sans SC 全系
-  - **HealthCard 重构**: 新增圆形彩色图标背景（36px, 12% opacity）、深色数值文本（#212529）、baseline 对齐的数值+单位行，与 mobile HealthCard 完全一致
-  - **Dashboard 对齐**: 设备状态栏改为白色卡片+圆形图标+右侧状态点风格，网格比例从 1.3 改为 1.0，报警 tile 改为 44px 圆形图标 + 未确认标签
-  - **Alarm 组件对齐**: AlarmCard 改为圆形图标（44px）+ 白色卡片风格，AlarmDialog 改为 80px 大图标 + 统一 abnormal 确认按钮色，AlarmTab 统计头改为白色卡片
-  - **趋势图表对齐**: 趋势卡片改为 20px padding 白色卡片，网格线改为虚线（5-3 dash），轴标题统一使用 AppColors.textSecondary
-  - **Settings 对齐**: 全部卡片统一白色 + 1.5 elevation，连接状态改为信息行+状态圆点风格（与 mobile 一致），关于信息改为信息行风格
-  - **绑定页精美化**: 图标改为 96px 圆形彩色背景，输入框添加 focused/enabled border，标题使用统一文本色
-  - **辅助组件对齐**: SummaryCard 日期图标改为圆形背景，报警 badge 改为实色填充，AlarmStats 饼图/柱状图卡片统一风格
-- **关键文件**:
-  - `lib/theme/app_colors.dart` — 颜色常量对齐
-  - `lib/theme/app_theme.dart` — 主题配置对齐
-  - `lib/ui/widgets/health_card.dart` — 卡片组件重构
-  - `lib/ui/tabs/dashboard_tab.dart` — 仪表盘布局对齐
-  - `lib/ui/widgets/alarm_card.dart` — 报警卡片对齐
-  - `lib/ui/widgets/alarm_dialog.dart` — 报警弹窗对齐
-  - `lib/ui/tabs/alarm_tab.dart` — 报警页对齐
-  - `lib/ui/tabs/trend_tab.dart` — 趋势页对齐
-  - `lib/ui/widgets/trend_chart.dart` — 趋势图表对齐
-  - `lib/ui/tabs/settings_tab.dart` — 设置页对齐
-  - `lib/ui/binding_page.dart` — 绑定页精美化
-  - `lib/ui/widgets/summary_card.dart` — 摘要卡片对齐
-  - `lib/ui/widgets/alarm_stats.dart` — 统计图表对齐
-- **验收状态**: 待验收
-  - `flutter analyze` ✅ 0 issues
+  - 统一 family_flutter 与 mobile_flutter 的颜色体系、文本色常量和主题参数，弱化高饱和配色并统一阴影与 elevation 表现
+  - 重构 HealthCard、Dashboard 设备状态栏和最近报警区域，对齐 mobile_flutter 的卡片结构、图标背景和数值排版
+  - 调整 AlarmCard、AlarmDialog、AlarmTab 统计头样式，统一报警页白色卡片和确认按钮视觉
+  - 优化 TrendTab、TrendChart、SummaryCard、AlarmStats 的卡片样式、虚线网格和辅助视觉元素
+  - 精修 SettingsTab 与 BindingPage，统一信息行、状态点、输入框边框和标题文本风格
+- **关键文件**: lib/theme/app_colors.dart, lib/theme/app_theme.dart, lib/ui/tabs/dashboard_tab.dart, lib/ui/tabs/alarm_tab.dart, lib/ui/tabs/trend_tab.dart, lib/ui/tabs/settings_tab.dart, lib/ui/widgets/health_card.dart, lib/ui/widgets/alarm_card.dart, lib/ui/widgets/alarm_dialog.dart, lib/ui/widgets/trend_chart.dart, lib/ui/widgets/summary_card.dart, lib/ui/widgets/alarm_stats.dart, lib/ui/binding_page.dart
 
 ---
 
 ### 2026-03-01 - 迭代 F-REMOTE: 远程操作功能
 
-- **迭代**: F-REMOTE
+- **迭代**: Phase 2 - 迭代 F-REMOTE
 - **状态**: ✅ 已完成
 - **主要改动**:
-  - 新增远程手动测量、请求立即上报、同步时间三个功能，参考 mobile_flutter 的 BLE 命令实现，通过 MQTT cmd topic 远程下发
-  - **MQTT 层**: `MqttSubscriber` 新增 `publishSyncTime()`、`publishRequestReport()`、`publishManualMeasure()` 三个命令发布方法
-  - **Provider 层**: `DeviceProvider` 新增 `syncTime()`、`requestReport()`、`manualMeasure()` 封装方法
-  - **设置页**: 连接状态与通知设置之间新增"远程操作"卡片，含同步时间和请求上报两个操作行（圆形图标 + 描述 + chevron），未连接时禁用
-  - **仪表盘**: 健康数据网格下方新增手动测量按钮（FilledButton.tonal），支持 15 秒倒计时动画和加载指示器
-- **关键文件**:
-  - `lib/mqtt/mqtt_subscriber.dart` — 新增 3 个 MQTT 命令发布方法
-  - `lib/providers/device_provider.dart` — 新增 3 个远程操作封装方法
-  - `lib/ui/tabs/settings_tab.dart` — 新增远程操作卡片
-  - `lib/ui/tabs/dashboard_tab.dart` — 新增手动测量按钮
-- **验收状态**: 待验收
-  - `flutter analyze` ✅ 0 issues
+  - 新增远程同步时间、请求立即上报和手动测量三个功能，对齐 `mobile_flutter` 的 BLE 命令语义并通过 MQTT cmd topic 下发
+  - `MqttSubscriber` 新增 `publishSyncTime()`、`publishRequestReport()`、`publishManualMeasure()` 三个命令发布方法
+  - `DeviceProvider` 新增 `syncTime()`、`requestReport()`、`manualMeasure()` 封装方法，统一 UI 层调用入口
+  - `SettingsTab` 新增“远程操作”卡片，提供同步时间和请求上报入口，未连接时禁用
+  - `DashboardTab` 在健康数据网格下方新增手动测量按钮，支持 15 秒倒计时动画和加载指示器
+- **关键文件**: lib/mqtt/mqtt_subscriber.dart, lib/providers/device_provider.dart, lib/ui/tabs/settings_tab.dart, lib/ui/tabs/dashboard_tab.dart
