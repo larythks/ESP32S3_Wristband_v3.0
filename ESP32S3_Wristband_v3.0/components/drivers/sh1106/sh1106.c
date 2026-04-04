@@ -45,7 +45,7 @@ static esp_err_t sh1106_write_cmd_nolock(uint8_t cmd)
     i2c_master_write_byte(handle, (SH1106_I2C_ADDR << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write(handle, data, 2, true);
     i2c_master_stop(handle);
-    esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, handle, pdMS_TO_TICKS(100));
+    esp_err_t ret = i2c_master_cmd_begin(I2C_BUS1_NUM, handle, pdMS_TO_TICKS(100));
     i2c_cmd_link_delete(handle);
     return ret;
 }
@@ -53,14 +53,14 @@ static esp_err_t sh1106_write_cmd_nolock(uint8_t cmd)
 // 写命令（加锁版本，供单条命令使用）
 static esp_err_t sh1106_write_cmd(uint8_t cmd)
 {
-    esp_err_t lock_ret = i2c_bus_lock(200);
+    esp_err_t lock_ret = i2c_bus_lock_port(I2C_BUS1_NUM, 200);
     if (lock_ret != ESP_OK) {
         ESP_LOGW(TAG, "I2C lock failed for cmd 0x%02X: %s",
                  cmd, esp_err_to_name(lock_ret));
         return lock_ret;
     }
     esp_err_t ret = sh1106_write_cmd_nolock(cmd);
-    i2c_bus_unlock();
+    i2c_bus_unlock_port(I2C_BUS1_NUM);
     return ret;
 }
 
@@ -140,7 +140,7 @@ void sh1106_fill(uint8_t color)
 void sh1106_update(void)
 {
     for (uint8_t page = 0; page < SH1106_PAGES; page++) {
-        if (i2c_bus_lock(200) != ESP_OK) {
+        if (i2c_bus_lock_port(I2C_BUS1_NUM, 200) != ESP_OK) {
             ESP_LOGW(TAG, "I2C lock timeout in sh1106_update (page %u)", page);
             break;
         }
@@ -155,7 +155,7 @@ void sh1106_update(void)
         }
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "Failed to set page %u address: %s", page, esp_err_to_name(ret));
-            i2c_bus_unlock();
+            i2c_bus_unlock_port(I2C_BUS1_NUM);
             break;
         }
 
@@ -166,10 +166,10 @@ void sh1106_update(void)
         i2c_master_write_byte(handle, 0x40, true);  // Co=0, D/C#=1 (data)
         i2c_master_write(handle, &s_buffer[page * SH1106_WIDTH], SH1106_WIDTH, true);
         i2c_master_stop(handle);
-        ret = i2c_master_cmd_begin(I2C_NUM_0, handle, pdMS_TO_TICKS(100));
+        ret = i2c_master_cmd_begin(I2C_BUS1_NUM, handle, pdMS_TO_TICKS(100));
         i2c_cmd_link_delete(handle);
 
-        i2c_bus_unlock();
+        i2c_bus_unlock_port(I2C_BUS1_NUM);
 
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "Failed to write page %u data: %s", page, esp_err_to_name(ret));

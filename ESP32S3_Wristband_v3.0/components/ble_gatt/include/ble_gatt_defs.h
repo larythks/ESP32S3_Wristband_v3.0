@@ -68,7 +68,7 @@ extern "C" {
  * 2       1     heart_rate   uint8     bpm
  * 3       1     spo2         uint8     %
  * 4       4     steps        uint32    count
- * 8       1     battery      uint8     %
+ * 8       1     reserved_8   uint8     (原 battery，已移除)
  * 9       1     data_valid   uint8     bitmap
  * 10      4     timestamp    uint32    Unix seconds
  * 14      6     reserved     -         -
@@ -78,7 +78,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  heart_rate;    /* offset 2:  bpm */
     uint8_t  spo2;          /* offset 3:  % */
     uint32_t steps;         /* offset 4:  step count */
-    uint8_t  battery;       /* offset 8:  battery % */
+    uint8_t  _reserved_8;   /* offset 8:  reserved (原 battery，已移除) */
     uint8_t  data_valid;    /* offset 9:  valid data bitmap */
     uint32_t timestamp;     /* offset 10: Unix seconds */
     uint8_t  reserved[6];   /* offset 14: reserved */
@@ -95,7 +95,7 @@ _Static_assert(sizeof(ble_telemetry_t) == 20,
  * 0       4     event_id     uint32    unique event ID
  * 4       1     alarm_type   uint8     1-9
  * 5       2     value        int16     trigger value x 10
- * 7       1     battery      uint8     battery %
+ * 7       1     reserved_7   uint8     (原 battery，已移除)
  * 8       4     timestamp    uint32    Unix seconds
  * 12      4     reserved     -         -
  */
@@ -103,7 +103,7 @@ typedef struct __attribute__((packed)) {
     uint32_t event_id;      /* offset 0:  unique event ID */
     uint8_t  alarm_type;    /* offset 4:  alarm type 1-9 */
     int16_t  value;         /* offset 5:  trigger value x 10 */
-    uint8_t  battery;       /* offset 7:  battery % */
+    uint8_t  _reserved_7;   /* offset 7:  reserved (原 battery，已移除) */
     uint32_t timestamp;     /* offset 8:  Unix seconds */
     uint8_t  reserved[4];   /* offset 12: reserved */
 } ble_alarm_t;
@@ -205,10 +205,6 @@ typedef enum {
 
 /** Telemetry 上报任务优先级 */
 #define BLE_TELEMETRY_TASK_PRIORITY 3
-
-/* ============== 默认电池电量 (MVP) ============== */
-
-#define BLE_BATTERY_DEFAULT         100
 
 #ifdef __cplusplus
 }

@@ -578,7 +578,6 @@ static esp_err_t send_telemetry_now(void)
     pkt.heart_rate = health.heart_rate;
     pkt.spo2       = health.spo2;
     pkt.steps      = pedometer_get_steps();
-    pkt.battery    = BLE_BATTERY_DEFAULT;
     pkt.data_valid = sensor.data_valid;
     pkt.timestamp  = ble_get_unix_timestamp();
 

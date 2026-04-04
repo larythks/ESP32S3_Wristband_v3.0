@@ -23,8 +23,9 @@ class DatabaseHelper {
     final path = p.join(dbPath, 'careband.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -36,7 +37,6 @@ class DatabaseHelper {
         heart_rate  INTEGER NOT NULL,
         spo2        INTEGER NOT NULL,
         steps       INTEGER NOT NULL,
-        battery     INTEGER NOT NULL,
         data_valid  INTEGER NOT NULL,
         timestamp   INTEGER NOT NULL
       )
@@ -51,7 +51,6 @@ class DatabaseHelper {
         event_id      INTEGER NOT NULL,
         alarm_type    INTEGER NOT NULL,
         trigger_value REAL NOT NULL,
-        battery       INTEGER NOT NULL,
         timestamp     INTEGER NOT NULL,
         is_acked      INTEGER NOT NULL DEFAULT 0,
         UNIQUE(event_id)
@@ -60,6 +59,53 @@ class DatabaseHelper {
     await db.execute(
       'CREATE INDEX idx_alarm_ts ON alarm(timestamp)',
     );
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // v1 -> v2: 移除 battery 列（SQLite 不支持 DROP COLUMN，需重建表）
+      await db.execute('ALTER TABLE telemetry RENAME TO telemetry_old');
+      await db.execute('''
+        CREATE TABLE telemetry (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          temperature REAL NOT NULL,
+          heart_rate  INTEGER NOT NULL,
+          spo2        INTEGER NOT NULL,
+          steps       INTEGER NOT NULL,
+          data_valid  INTEGER NOT NULL,
+          timestamp   INTEGER NOT NULL
+        )
+      ''');
+      await db.execute('''
+        INSERT INTO telemetry (id, temperature, heart_rate, spo2, steps, data_valid, timestamp)
+        SELECT id, temperature, heart_rate, spo2, steps, data_valid, timestamp FROM telemetry_old
+      ''');
+      await db.execute('DROP TABLE telemetry_old');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(timestamp)',
+      );
+
+      await db.execute('ALTER TABLE alarm RENAME TO alarm_old');
+      await db.execute('''
+        CREATE TABLE alarm (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_id      INTEGER NOT NULL,
+          alarm_type    INTEGER NOT NULL,
+          trigger_value REAL NOT NULL,
+          timestamp     INTEGER NOT NULL,
+          is_acked      INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(event_id)
+        )
+      ''');
+      await db.execute('''
+        INSERT INTO alarm (id, event_id, alarm_type, trigger_value, timestamp, is_acked)
+        SELECT id, event_id, alarm_type, trigger_value, timestamp, is_acked FROM alarm_old
+      ''');
+      await db.execute('DROP TABLE alarm_old');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_alarm_ts ON alarm(timestamp)',
+      );
+    }
   }
 
   // ---- Telemetry CRUD ----
@@ -71,7 +117,6 @@ class DatabaseHelper {
       'heart_rate': data.heartRate,
       'spo2': data.spo2,
       'steps': data.steps,
-      'battery': data.battery,
       'data_valid': data.dataValid,
       'timestamp': data.timestamp.millisecondsSinceEpoch,
     });
@@ -114,7 +159,6 @@ class DatabaseHelper {
         'event_id': data.eventId,
         'alarm_type': data.alarmType.code,
         'trigger_value': data.triggerValue,
-        'battery': data.battery,
         'timestamp': data.timestamp.millisecondsSinceEpoch,
         'is_acked': data.isAcked ? 1 : 0,
       },
@@ -168,6 +212,23 @@ class DatabaseHelper {
     await deleteAlarmsBefore(todayStart);
   }
 
+  /// 清除所有数据（包括遥测、报警）
+  /// 谨慎使用，会清除所有本地存储数据
+  Future<Map<String, int>> clearAllData() async {
+    final db = await database;
+
+    // 清除所有遥测数据
+    final telDeleted = await db.delete('telemetry');
+
+    // 清除所有报警数据（包括已确认和未确认）
+    final alarmDeleted = await db.delete('alarm');
+
+    return {
+      'telemetry': telDeleted,
+      'alarm': alarmDeleted,
+    };
+  }
+
   Future<void> close() async {
     await _db?.close();
     _db = null;
@@ -181,7 +242,6 @@ class DatabaseHelper {
       heartRate: row['heart_rate'] as int,
       spo2: row['spo2'] as int,
       steps: row['steps'] as int,
-      battery: row['battery'] as int,
       dataValid: row['data_valid'] as int,
       timestamp: DateTime.fromMillisecondsSinceEpoch(
         row['timestamp'] as int,
@@ -194,7 +254,6 @@ class DatabaseHelper {
       eventId: row['event_id'] as int,
       alarmType: AlarmType.fromCode(row['alarm_type'] as int),
       triggerValue: (row['trigger_value'] as num).toDouble(),
-      battery: row['battery'] as int,
       timestamp: DateTime.fromMillisecondsSinceEpoch(
         row['timestamp'] as int,
       ),

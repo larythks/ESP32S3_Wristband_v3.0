@@ -1396,3 +1396,37 @@ uint8_t rtc_sync_counter = UI_HOME_RTC_SYNC_CYCLES - 1;
 - `components/ui_manager/ui_manager.c`
 - `main/main.c`
 - `mobile_flutter/lib/ui/tabs/dashboard_tab.dart`
+
+---
+
+## ISSUE-050：4 个 I2C 设备共享单总线导致 OLED 刷屏阻塞传感器采样
+
+**发现日期**：2026-03-01
+
+**原因**：
+SH1106 OLED、DS3231 RTC、MAX30102 心率传感器、MPU6050 运动传感器全部挂载在同一条 I2C 总线（I2C_NUM_0，GPIO 8/9）上。OLED 每次 `sh1106_update()` 需要写入 8 页显示数据，长时间占用总线并持有互斥锁，导致 MAX30102 和 MPU6050 的高频采样被阻塞，产生数据丢失和互斥锁超时。此外 `sh1106.c` 中 2 处硬编码了 `I2C_NUM_0`，不利于总线分离。
+
+**后果**：
+- MAX30102 心率/血氧采样被 OLED 刷屏阻塞，PPG 数据丢失导致测量不准
+- MPU6050 运动数据采样频率下降，影响计步和跌倒检测的实时性
+- I2C 互斥锁超时（100ms）频繁发生
+
+**解决方案**：
+利用 ESP32-S3 的第二路 I2C 控制器（I2C_NUM_1），将 4 个设备拆分到两条独立总线：
+
+- **Bus 0** (I2C_NUM_0, GPIO 8 SDA / GPIO 9 SCL)：MAX30102 + MPU6050（保持原接线）
+- **Bus 1** (I2C_NUM_1, GPIO 10 SDA / GPIO 11 SCL)：SH1106 OLED + DS3231 RTC（改接新线）
+
+具体修改：
+1. `i2c_bus.h/c`：新增 Bus 1 引脚定义、双互斥锁、带 `i2c_port_t port` 参数的读写 API，原有函数改为 Bus 0 包装
+2. `sh1106.c`：将 2 处硬编码 `I2C_NUM_0` 改为 `I2C_BUS0_NUM` 宏
+3. `max30102.c`、`mpu6050.c`：将 `i2c_bus_read/write` 调用改为 `_port` 版本，传入 `I2C_BUS1_NUM`
+4. `main.c`：新增 `i2c_bus1_init()` + `i2c_bus1_scan()` 调用
+
+**涉及文件**：
+- `components/drivers/common/include/i2c_bus.h`
+- `components/drivers/common/i2c_bus.c`
+- `components/drivers/sh1106/sh1106.c`
+- `components/drivers/max30102/max30102.c`
+- `components/drivers/mpu6050/mpu6050.c`
+- `main/main.c`

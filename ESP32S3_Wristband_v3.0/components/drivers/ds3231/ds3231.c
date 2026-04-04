@@ -53,18 +53,18 @@ static bool is_time_valid(const ds3231_time_t *time)
 esp_err_t ds3231_init(void)
 {
     uint8_t seconds = 0;
-    esp_err_t ret = i2c_bus_read_byte(DS3231_I2C_ADDR, DS3231_REG_SECONDS, &seconds);
+    esp_err_t ret = i2c_bus_read_byte_port(I2C_BUS1_NUM, DS3231_I2C_ADDR, DS3231_REG_SECONDS, &seconds);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DS3231 communication failed");
         return ret;
     }
 
     uint8_t status = 0;
-    ret = i2c_bus_read_byte(DS3231_I2C_ADDR, DS3231_REG_STATUS, &status);
+    ret = i2c_bus_read_byte_port(I2C_BUS1_NUM, DS3231_I2C_ADDR, DS3231_REG_STATUS, &status);
     if (ret == ESP_OK && (status & DS3231_STATUS_OSF)) {
         ESP_LOGW(TAG, "Oscillator stop flag is set, RTC time may be invalid");
         status &= (uint8_t)~DS3231_STATUS_OSF;
-        i2c_bus_write_byte(DS3231_I2C_ADDR, DS3231_REG_STATUS, status);
+        i2c_bus_write_byte_port(I2C_BUS1_NUM, DS3231_I2C_ADDR, DS3231_REG_STATUS, status);
     }
 
     ESP_LOGI(TAG, "DS3231 initialized");
@@ -80,7 +80,7 @@ esp_err_t ds3231_get_time(ds3231_time_t *time)
     uint8_t raw[7] = {0};
     esp_err_t ret = ESP_FAIL;
     for (int attempt = 0; attempt < 3; attempt++) {
-        ret = i2c_bus_read(DS3231_I2C_ADDR, DS3231_REG_SECONDS, raw, sizeof(raw));
+        ret = i2c_bus_read_port(I2C_BUS1_NUM, DS3231_I2C_ADDR, DS3231_REG_SECONDS, raw, sizeof(raw));
         if (ret == ESP_OK) {
             break;
         }
@@ -135,5 +135,5 @@ esp_err_t ds3231_set_time(const ds3231_time_t *time)
     buf[5] = dec_to_bcd(time->month);
     buf[6] = dec_to_bcd((uint8_t)(time->year - 2000));
 
-    return i2c_bus_write(DS3231_I2C_ADDR, DS3231_REG_SECONDS, buf, sizeof(buf));
+    return i2c_bus_write_port(I2C_BUS1_NUM, DS3231_I2C_ADDR, DS3231_REG_SECONDS, buf, sizeof(buf));
 }

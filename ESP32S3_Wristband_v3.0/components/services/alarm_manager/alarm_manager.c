@@ -167,7 +167,6 @@ static void alarm_cache_push(const ble_alarm_t *alarm)
         s_cache[idx].alarm_type  = alarm->alarm_type;
         s_cache[idx].value       = alarm->value;
         s_cache[idx].timestamp   = alarm->timestamp;
-        s_cache[idx].battery     = alarm->battery;
         s_cache[idx].retry_count = 0;
         s_cache[idx].acked       = false;
         s_cache[idx].valid       = true;
@@ -178,7 +177,6 @@ static void alarm_cache_push(const ble_alarm_t *alarm)
         s_cache[s_cache_head].alarm_type  = alarm->alarm_type;
         s_cache[s_cache_head].value       = alarm->value;
         s_cache[s_cache_head].timestamp   = alarm->timestamp;
-        s_cache[s_cache_head].battery     = alarm->battery;
         s_cache[s_cache_head].retry_count = 0;
         s_cache[s_cache_head].acked       = false;
         s_cache[s_cache_head].valid       = true;
@@ -292,7 +290,6 @@ static void send_ble_alarm(void)
     pkt.event_id  = s_ctx.event_id;
     pkt.alarm_type = alert_to_ble_alarm_type(s_ctx.current_alarm.type);
     pkt.value     = s_ctx.current_alarm.value;
-    pkt.battery   = BLE_BATTERY_DEFAULT;
     pkt.timestamp = ble_get_unix_timestamp();
 
     esp_err_t ret = ble_notify_alarm(&pkt);
@@ -430,7 +427,6 @@ static void alarm_retry_task(void *arg)
             .event_id   = entries[i].event_id,
             .alarm_type = entries[i].alarm_type,
             .value      = entries[i].value,
-            .battery    = entries[i].battery,
             .timestamp  = entries[i].timestamp,
         };
 

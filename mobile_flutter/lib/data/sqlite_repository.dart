@@ -26,6 +26,9 @@ class SqliteDataRepository implements DataRepository {
 
   Future<void> cleanup() => _dbHelper.cleanupBeforeToday();
 
+  /// 清除所有数据
+  Future<Map<String, int>> clearAllData() => _dbHelper.clearAllData();
+
   @override
   Future<void> dispose() => _dbHelper.close();
 }

@@ -25,6 +25,18 @@
 | Week 4 | 迭代 4.2: 数据展示 UI + 报警 UI | ✅ 已完成 | 2026-02-21 |
 | Week 4 | 迭代 4.3: MQTT 网关 + EMQX Cloud 部署 | ✅ 已完成 | 2026-02-21 |
 | Week 4 | 迭代 4.4: 端到端联调 + 问题修复 | ✅ 已完成 | 2026-02-22 |
+| Phase 2 | 开发计划制定：家属远程监护 App | ✅ 已完成 | 2026-02-25 |
+| 全局变更 | 移除电量检测功能（无 ADC 模块） | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-1: 项目搭建 + MQTT TLS 连接 | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-2: 数据模型 + SQLite 存储 + Repository | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-3: Provider + Android前台服务 + main.dart集成 | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-4: Dashboard UI + 报警通知 | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-5: 趋势图表 + 每日摘要 + 异常提示 | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-6: 报警历史 + 统计图表 + 远程ACK | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-7: 设置页 + UI精修 + 联调 | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-UI: 设计系统重构 + UI/UX 全面改进 | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-UI-ALIGN: family_flutter UI 与 mobile_flutter 风格对齐 | ✅ 已完成 | 2026-03-01 |
+| Phase 2 | 迭代 F-REMOTE: 远程操作功能（手动测量/请求上报/同步时间） | ✅ 已完成 | 2026-03-01 |
 
 ## 详细记录
 
@@ -425,3 +437,163 @@
   - **错误反馈**: `alarm_tab.dart` 的确认按钮增加 SnackBar 失败提示
 - **关键文件**: lib/main.dart, lib/ui/device_page.dart, lib/data/ble_provider.dart, lib/ui/tabs/alarm_tab.dart
 - **附带修复**: ISSUE-flutter-017, ISSUE-flutter-018
+
+---
+
+### 2026-02-25 - Phase 2 开发计划制定：家属远程监护 App
+
+- **迭代**: Phase 2 计划
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 在 `development_plan.md` 中新增 Phase 2 章节（P2-1 ~ P2-9）
+  - 包含：模块边界表、数据模型定义、SQLite Schema、7 个迭代详细计划（F-1 ~ F-7）、项目文件结构、依赖清单、风险清单、验证方式
+  - 家属 App 为全新独立 Flutter 项目（`family_flutter/`），纯 MQTT 订阅，不依赖 BLE
+- **关键文件**: development_plan.md, PROGRESS.md
+- **验收状态**: 待验收
+
+---
+
+### 2026-03-01 - 移除电量检测功能（无 ADC 模块）
+
+- **迭代**: 全局变更（影响固件 + Flutter App）
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 固件：`ble_gatt_defs.h` 中 battery 字段改为 reserved 字节（保持包长不变）
+  - 固件：`ble_service.c`、`alarm_manager.h`、`alarm_manager.c` 移除所有 battery 赋值
+  - Flutter：`models.dart` 移除 battery 字段，`ble_parser.dart` 跳过 reserved 字节
+  - Flutter：`database_helper.dart` 数据库 v1→v2 迁移（重建表去掉 battery 列）
+  - Flutter：`settings_tab.dart` 移除电量显示行
+  - Flutter：`mqtt_gateway.dart` 移除 JSON 中 battery 字段
+  - 开发计划：`development_plan.md` 同步移除 12 处 battery/电量引用
+- **关键文件**: ble_gatt_defs.h, ble_service.c, alarm_manager.h, alarm_manager.c, models.dart, ble_parser.dart, database_helper.dart, settings_tab.dart, mqtt_gateway.dart, development_plan.md
+- **验收状态**: 待验收
+
+---
+
+### 2026-03-01 - 迭代 F-1: 项目搭建 + MQTT TLS 连接
+
+- **迭代**: Phase 2 - 迭代 F-1
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - MqttSubscriber 单例：TLS 连接 + 4 topic 订阅 + 指数退避重连
+  - MqttConfig 占位配置（gitignored）
+  - CA 证书占位文件
+- **关键文件**: lib/mqtt/mqtt_subscriber.dart, lib/mqtt/mqtt_config.dart, assets/CA/emqxsl-ca.crt
+
+---
+
+### 2026-03-01 - 迭代 F-2: 数据模型 + SQLite 存储 + Repository
+
+- **迭代**: Phase 2 - 迭代 F-2
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 完整数据模型（FamilyAlarmType/TelemetryRecord/AlarmRecord/DeviceStatusRecord/DailySummary/HealthThresholds）
+  - SQLite 数据库（telemetry/alarm/config 三表）
+  - FamilyRepository（CRUD + 聚合查询 + 7天清理）
+- **关键文件**: lib/data/models.dart, lib/data/database_helper.dart, lib/data/family_repository.dart
+
+---
+
+### 2026-03-01 - 迭代 F-3: Provider + Android前台服务 + main.dart集成
+
+- **迭代**: Phase 2 - 迭代 F-3
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - Android 前台服务 MqttKeepAliveService（MethodChannel 桥接）
+  - DeviceProvider + HealthAnalysisProvider 状态管理
+  - main.dart 重写（MultiProvider + Material 3 主题 + 路由）
+  - pubspec.yaml 完整依赖 + build.gradle.kts 配置
+- **关键文件**: android/.../MqttKeepAliveService.kt, android/.../MainActivity.kt, lib/providers/, lib/main.dart, pubspec.yaml
+
+---
+
+### 2026-03-01 - 迭代 F-4: Dashboard UI + 报警通知
+
+- **迭代**: Phase 2 - 迭代 F-4
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - NotificationService（flutter_local_notifications，careband_alarm 渠道）
+  - DashboardTab（2x2 健康卡片 + 最近报警）
+  - HealthCard 组件 + AlarmDialog 报警弹窗
+  - BindingPage 设备绑定页 + HomePage 四Tab导航
+- **关键文件**: lib/services/notification_service.dart, lib/ui/tabs/dashboard_tab.dart, lib/ui/widgets/, lib/ui/home_page.dart, lib/ui/binding_page.dart
+
+---
+
+### 2026-03-01 - 迭代 F-5: 趋势图表 + 每日摘要 + 异常提示
+
+- **迭代**: Phase 2 - 迭代 F-5
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - TrendTab（24h/7天时间范围 + 心率/血氧/温度/步数指标切换）
+  - TrendChart（fl_chart 折线图 + 阈值虚线 + 异常红点）
+  - SummaryCard 每日摘要 + AnomalyTips 异常提示
+- **关键文件**: lib/ui/tabs/trend_tab.dart, lib/ui/widgets/trend_chart.dart, lib/ui/widgets/summary_card.dart, lib/ui/widgets/anomaly_tips.dart
+
+---
+
+### 2026-03-01 - 迭代 F-6: 报警历史 + 统计图表 + 远程ACK
+
+- **迭代**: Phase 2 - 迭代 F-6
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - AlarmTab（历史列表 + 筛选 + 分页）
+  - AlarmStats（饼图类型分布 + 柱状图7天趋势）
+  - AlarmCard（ACK按钮 + 状态显示）
+  - 远程ACK链路完整实现
+- **关键文件**: lib/ui/tabs/alarm_tab.dart, lib/ui/widgets/alarm_card.dart, lib/ui/widgets/alarm_stats.dart
+
+---
+
+### 2026-03-01 - 迭代 F-7: 设置页 + UI精修 + 联调
+
+- **迭代**: Phase 2 - 迭代 F-7
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - SettingsTab（设备管理/连接状态/通知开关/数据管理/关于）
+  - UI精修：Material 3 主题统一
+  - flutter analyze 验证通过，零 error
+  - flutter test 冒烟测试通过
+- **关键文件**: lib/ui/tabs/settings_tab.dart, lib/ui/home_page.dart
+
+---
+
+### 2026-03-01 - 迭代 F-UI: 设计系统重构 + UI/UX 全面改进
+
+- **迭代**: Phase 2 - 迭代 F-UI
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 新增 `AppColors` 与 `AppTheme`，集中管理语义化颜色、Material 3 主题和字体配置，替换全项目硬编码颜色值
+  - 为 HealthCard、AlarmCard、AlarmDialog、TrendChart、SummaryCard 等关键组件补充 `Semantics` 描述，并增大 FilterChip 与 ACK 按钮触控区域
+  - `DeviceProvider` 和 `HealthAnalysisProvider` 新增加载状态标志，历史、趋势和统计数据加载流程统一为 `try/catch/finally`
+  - 新增 `AnimatedListItem`，并将 `AnimatedSwitcher`、`AnimatedCrossFade`、`FadeUpwardsPageTransitionsBuilder` 应用于数值切换、列表展示和页面路由
+  - 新增 `formatters.dart` 工具函数集，消除重复格式化逻辑，同时优化空状态设计和冗余 Card 样式声明
+- **关键文件**: lib/theme/app_colors.dart, lib/theme/app_theme.dart, lib/utils/formatters.dart, lib/ui/widgets/animated_list_item.dart, lib/ui/tabs/, lib/ui/widgets/, lib/providers/, lib/main.dart, pubspec.yaml
+
+---
+
+### 2026-03-01 - 迭代 F-UI-ALIGN: family_flutter UI 与 mobile_flutter 风格对齐
+
+- **迭代**: Phase 2 - 迭代 F-UI-ALIGN
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 统一 family_flutter 与 mobile_flutter 的颜色体系、文本色常量和主题参数，弱化高饱和配色并统一阴影与 elevation 表现
+  - 重构 HealthCard、Dashboard 设备状态栏和最近报警区域，对齐 mobile_flutter 的卡片结构、图标背景和数值排版
+  - 调整 AlarmCard、AlarmDialog、AlarmTab 统计头样式，统一报警页白色卡片和确认按钮视觉
+  - 优化 TrendTab、TrendChart、SummaryCard、AlarmStats 的卡片样式、虚线网格和辅助视觉元素
+  - 精修 SettingsTab 与 BindingPage，统一信息行、状态点、输入框边框和标题文本风格
+- **关键文件**: lib/theme/app_colors.dart, lib/theme/app_theme.dart, lib/ui/tabs/dashboard_tab.dart, lib/ui/tabs/alarm_tab.dart, lib/ui/tabs/trend_tab.dart, lib/ui/tabs/settings_tab.dart, lib/ui/widgets/health_card.dart, lib/ui/widgets/alarm_card.dart, lib/ui/widgets/alarm_dialog.dart, lib/ui/widgets/trend_chart.dart, lib/ui/widgets/summary_card.dart, lib/ui/widgets/alarm_stats.dart, lib/ui/binding_page.dart
+
+---
+
+### 2026-03-01 - 迭代 F-REMOTE: 远程操作功能
+
+- **迭代**: Phase 2 - 迭代 F-REMOTE
+- **状态**: ✅ 已完成
+- **主要改动**:
+  - 新增远程同步时间、请求立即上报和手动测量三个功能，对齐 `mobile_flutter` 的 BLE 命令语义并通过 MQTT cmd topic 下发
+  - `MqttSubscriber` 新增 `publishSyncTime()`、`publishRequestReport()`、`publishManualMeasure()` 三个命令发布方法
+  - `DeviceProvider` 新增 `syncTime()`、`requestReport()`、`manualMeasure()` 封装方法，统一 UI 层调用入口
+  - `SettingsTab` 新增“远程操作”卡片，提供同步时间和请求上报入口，未连接时禁用
+  - `DashboardTab` 在健康数据网格下方新增手动测量按钮，支持 15 秒倒计时动画和加载指示器
+- **关键文件**: lib/mqtt/mqtt_subscriber.dart, lib/providers/device_provider.dart, lib/ui/tabs/settings_tab.dart, lib/ui/tabs/dashboard_tab.dart

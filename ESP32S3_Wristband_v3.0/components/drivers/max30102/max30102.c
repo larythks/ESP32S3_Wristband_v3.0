@@ -29,7 +29,7 @@ static const max30102_config_t default_config = {
  */
 static esp_err_t max30102_write_reg(uint8_t reg, uint8_t value)
 {
-    return i2c_bus_write_byte(MAX30102_I2C_ADDR, reg, value);
+    return i2c_bus_write_byte_port(I2C_BUS0_NUM, MAX30102_I2C_ADDR, reg, value);
 }
 
 /**
@@ -37,7 +37,7 @@ static esp_err_t max30102_write_reg(uint8_t reg, uint8_t value)
  */
 static esp_err_t max30102_read_reg(uint8_t reg, uint8_t *value)
 {
-    return i2c_bus_read_byte(MAX30102_I2C_ADDR, reg, value);
+    return i2c_bus_read_byte_port(I2C_BUS0_NUM, MAX30102_I2C_ADDR, reg, value);
 }
 
 esp_err_t max30102_reset(void)
@@ -167,7 +167,7 @@ esp_err_t max30102_read_fifo(uint32_t *red, uint32_t *ir, uint8_t *count)
     samples_to_read = (available < *count) ? available : *count;
 
     for (uint8_t i = 0; i < samples_to_read; i++) {
-        ret = i2c_bus_read(MAX30102_I2C_ADDR, MAX30102_REG_FIFO_DATA, buffer, 6);
+        ret = i2c_bus_read_port(I2C_BUS0_NUM, MAX30102_I2C_ADDR, MAX30102_REG_FIFO_DATA, buffer, 6);
         if (ret != ESP_OK) {
             *count = i;
             return ret;

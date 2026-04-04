@@ -140,10 +140,15 @@ static bool temp_read_result(void)
 
         s_ctx.temp_state = TEMP_STATE_IDLE;
         return true;
+    } else {
+        ESP_LOGW(TAG, "Failed to read temperature");
+        s_ctx.temp_state = TEMP_STATE_IDLE;
+        
+        // 修复：通信失败时2秒后重试，而不是30秒
+        uint32_t now = get_timestamp_ms();
+        s_ctx.temp_last_sample = now - SENSOR_TEMP_NORMAL_INTERVAL + 2000;
+        return false;
     }
-    ESP_LOGW(TAG, "Failed to read temperature");
-    s_ctx.temp_state = TEMP_STATE_IDLE;
-    return false;
 }
 
 /**
@@ -381,7 +386,8 @@ esp_err_t sensor_service_start(void)
     uint32_t now = get_timestamp_ms();
     s_ctx.temp_last_sample = now - SENSOR_TEMP_NORMAL_INTERVAL + 1000;
     // 立即触发第一次心率测量
-    s_ctx.hr_last_auto_trigger = now - SENSOR_HR_AUTO_INTERVAL_MS;
+    s_ctx.hr_last_auto_trigger = now - SENSOR_HR_AUTO_INTERVAL_MS + SENSOR_HR_BOOT_TRIGGER_DELAY_MS;
+    ESP_LOGI(TAG, "First auto HR window will trigger in %u ms", (unsigned)SENSOR_HR_BOOT_TRIGGER_DELAY_MS);
 
     BaseType_t ret = xTaskCreate(
         sensor_task,

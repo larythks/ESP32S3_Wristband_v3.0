@@ -13,12 +13,24 @@
 extern "C" {
 #endif
 
-// I2C 总线配置
-#define I2C_MASTER_NUM          I2C_NUM_0
-#define I2C_MASTER_SDA_IO       GPIO_NUM_8
-#define I2C_MASTER_SCL_IO       GPIO_NUM_9
-#define I2C_MASTER_FREQ_HZ      400000
+// I2C 总线通用配置
+#define I2C_MASTER_FREQ_HZ      100000
 #define I2C_MASTER_TIMEOUT_MS   100
+
+// Bus 0: 心率 (MAX30102) + 运动 (MPU6050)  — 保持原接线
+#define I2C_BUS0_NUM            I2C_NUM_0
+#define I2C_BUS0_SDA            GPIO_NUM_8
+#define I2C_BUS0_SCL            GPIO_NUM_9
+
+// Bus 1: OLED (SH1106) + RTC (DS3231)  — 新接线
+#define I2C_BUS1_NUM            I2C_NUM_1
+#define I2C_BUS1_SDA            GPIO_NUM_10
+#define I2C_BUS1_SCL            GPIO_NUM_11
+
+// 向后兼容旧宏
+#define I2C_MASTER_NUM          I2C_BUS0_NUM
+#define I2C_MASTER_SDA_IO       I2C_BUS0_SDA
+#define I2C_MASTER_SCL_IO       I2C_BUS0_SCL
 
 /**
  * @brief 初始化 I2C 主机总线
@@ -81,6 +93,31 @@ esp_err_t i2c_bus_lock(uint32_t timeout_ms);
  * @brief 释放 I2C 总线互斥锁
  */
 void i2c_bus_unlock(void);
+
+/* ========== Bus 1 初始化与扫描 ========== */
+
+/**
+ * @brief 初始化 I2C Bus 1 (SH1106 OLED + DS3231 RTC)
+ */
+esp_err_t i2c_bus1_init(void);
+
+/**
+ * @brief 扫描 I2C Bus 1 上的设备
+ */
+void i2c_bus1_scan(void);
+
+/* ========== 带 port 参数的通用 API ========== */
+
+esp_err_t i2c_bus_write_port(i2c_port_t port, uint8_t dev_addr, uint8_t reg_addr,
+                             const uint8_t *data, size_t len);
+esp_err_t i2c_bus_read_port(i2c_port_t port, uint8_t dev_addr, uint8_t reg_addr,
+                            uint8_t *data, size_t len);
+esp_err_t i2c_bus_write_byte_port(i2c_port_t port, uint8_t dev_addr, uint8_t reg_addr,
+                                  uint8_t data);
+esp_err_t i2c_bus_read_byte_port(i2c_port_t port, uint8_t dev_addr, uint8_t reg_addr,
+                                 uint8_t *data);
+esp_err_t i2c_bus_lock_port(i2c_port_t port, uint32_t timeout_ms);
+void      i2c_bus_unlock_port(i2c_port_t port);
 
 #ifdef __cplusplus
 }

@@ -2,6 +2,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "i2c_bus.h"
 #include "mpu6050.h"
 #include "sh1106.h"
@@ -24,6 +25,43 @@
 #include "voice_cmd.h"
 
 static const char *TAG = "main";
+
+#define RTC_BOOT_WAIT_TIMEOUT_MS      3000
+#define RTC_BOOT_RETRY_DELAY_MS         50
+#define RTC_BOOT_RETRY_LOG_INTERVAL     10
+
+static bool wait_rtc_ready(ds3231_time_t *rtc_time, uint32_t timeout_ms)
+{
+    if (rtc_time == NULL) {
+        return false;
+    }
+
+    uint32_t attempt = 0;
+    int64_t start_us = esp_timer_get_time();
+    esp_err_t last_err = ESP_FAIL;
+
+    while ((uint32_t)((esp_timer_get_time() - start_us) / 1000) < timeout_ms) {
+        attempt++;
+        last_err = ds3231_get_time(rtc_time);
+        if (last_err == ESP_OK) {
+            uint32_t elapsed_ms = (uint32_t)((esp_timer_get_time() - start_us) / 1000);
+            ESP_LOGI(TAG, "RTC ready after %lu attempt(s), %lu ms",
+                     (unsigned long)attempt, (unsigned long)elapsed_ms);
+            return true;
+        }
+
+        if (attempt == 1 || (attempt % RTC_BOOT_RETRY_LOG_INTERVAL) == 0) {
+            ESP_LOGW(TAG, "RTC read retry %lu failed: %s",
+                     (unsigned long)attempt, esp_err_to_name(last_err));
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(RTC_BOOT_RETRY_DELAY_MS));
+    }
+
+    ESP_LOGW(TAG, "RTC read timeout after %lu ms, last error: %s",
+             (unsigned long)timeout_ms, esp_err_to_name(last_err));
+    return false;
+}
 
 /**
  * @brief 传感器数据事件处理回调
@@ -115,16 +153,24 @@ void app_main(void)
         return;
     }
 
-    // 初始化 I2C 总线
+    // 初始化 I2C Bus 0 (MAX30102 + MPU6050，原接线)
     ret = i2c_bus_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C bus init failed!");
+        ESP_LOGE(TAG, "I2C bus0 init failed!");
+        return;
+    }
+
+    // 初始化 I2C Bus 1 (SH1106 OLED + DS3231 RTC，新接线)
+    ret = i2c_bus1_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus1 init failed!");
         return;
     }
 
     // 扫描 I2C 设备
     vTaskDelay(pdMS_TO_TICKS(100));
     i2c_bus_scan();
+    i2c_bus1_scan();
 
     // 初始化 MPU6050
     ret = mpu6050_init();
@@ -157,14 +203,14 @@ void app_main(void)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DS3231 init failed!");
     } else {
-        if (ds3231_get_time(&rtc_time) == ESP_OK) {
-            rtc_valid = true;
+        rtc_valid = wait_rtc_ready(&rtc_time, RTC_BOOT_WAIT_TIMEOUT_MS);
+        if (rtc_valid) {
             ESP_LOGI(TAG, "RTC time: %04u-%02u-%02u %02u:%02u:%02u (DOW=%u)",
                      rtc_time.year, rtc_time.month, rtc_time.day,
                      rtc_time.hour, rtc_time.minute, rtc_time.second,
                      rtc_time.day_of_week);
         } else {
-            ESP_LOGW(TAG, "RTC read failed after init");
+            ESP_LOGW(TAG, "RTC read failed in boot wait window");
         }
     }
 
