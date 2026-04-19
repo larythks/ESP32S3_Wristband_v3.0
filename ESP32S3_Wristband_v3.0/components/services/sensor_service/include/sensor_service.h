@@ -26,7 +26,7 @@ extern "C" {
 #define SENSOR_HR_BOOT_TRIGGER_DELAY_MS 1500    // Keep boot auto trigger; delay 1.5s to ease I2C contention
 
 // 实时采样间隔 (ms)
-#define SENSOR_REALTIME_INTERVAL        16000   // 实时模式: 16秒(匹配15秒HR测量窗口)
+#define SENSOR_REALTIME_INTERVAL        1000   // 实时模式: 16秒(匹配15秒HR测量窗口)
 
 // PPG 批量数据配置
 #define PPG_BATCH_MAX           16      // 单次取出最大样本数

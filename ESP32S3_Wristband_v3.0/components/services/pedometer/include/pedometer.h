@@ -16,8 +16,8 @@ extern "C" {
 
 // ============== 算法参数 ==============
 
-#define PEDOMETER_THRESHOLD_LOW     800     // 峰值检测下阈值
-#define PEDOMETER_THRESHOLD_HIGH    1500    // 峰值检测上阈值
+#define PEDOMETER_THRESHOLD_LOW     600     // 峰值检测下阈值
+#define PEDOMETER_THRESHOLD_HIGH    2000    // 峰值检测上阈值
 #define PEDOMETER_MIN_INTERVAL_MS   250     // 最小步间隔 (ms)
 #define PEDOMETER_MAX_INTERVAL_MS   2000    // 最大步间隔 (ms)
 

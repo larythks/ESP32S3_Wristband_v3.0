@@ -1430,3 +1430,99 @@ SH1106 OLED、DS3231 RTC、MAX30102 心率传感器、MPU6050 运动传感器全
 - `components/drivers/max30102/max30102.c`
 - `components/drivers/mpu6050/mpu6050.c`
 - `main/main.c`
+
+---
+
+## ISSUE-051：开机后 OLED HOME 页温度显示延迟 5~40 秒
+
+**发现日期**：2026-04-19
+
+**原因**：
+此问题由三个相互叠加的缺陷共同造成，排查过程中逐层暴露：
+
+**1. `main.c` 初始化顺序错误导致事件订阅直接失败（根因层）**
+`main.c:230` 调用 `ui_manager_init()` 早于 `main.c:241` 的 `event_bus_init()`。`ui_manager_init()` 内部会调用 `event_subscribe(EVT_SENSOR_DATA, on_sensor_data_cb, NULL)` 订阅传感器数据事件，但此时事件总线尚未初始化，`event_subscribe()` 直接返回 `ESP_ERR_INVALID_STATE`（见 `event_bus.c:154-156` 的 `if (!s_ctx.initialized)` 早退分支）。UI 的事件回调**从未被成功注册**，事件驱动路径完全失效，所有温度刷新只能退化到原有轮询兜底。
+
+**2. UI 温度刷新机制仅依赖周期性轮询，与传感器采样时刻不同步（机制层）**
+`ui_manager.c` 中 HOME 页温度刷新基于 `temp_refresh_counter`（500ms × 60 = 30s）轮询：
+- 初值 56，启动 2 秒后首次触发 `draw_home_page()`
+- 若当时 `temp_validity != MEASURE_VALID`，计数器重置为 54（3s 后重试）
+- 之后每 30s 轮询一次
+
+DS18B20 首次转换需 `sensor_service_start + 1.75s`（1s 启动延迟 + 750ms 转换），加上 `health_monitor` 处理延迟、I2C 偶发失败，UI 的轮询时刻与传感器就绪时刻对不齐，最坏情况接近一个完整 `SENSOR_TEMP_NORMAL_INTERVAL`（30 秒）。
+
+**3. 事件驱动刷新若仅触发首次就绪，后续温度变化仍可能刷旧值（算法层）**
+即便改为事件驱动后仅用一次性门闩（首次 VALID 即不再响应），后续温度变化会继续依赖 30s 轮询，而轮询时刻不一定对齐 DS18B20 的下一次新采样完成时刻，可能读到上一轮旧值，导致环境温度变化时显示值长时间不更新。
+
+**后果**：
+- 系统开机后 OLED 主页温度区域显示 `--.-C` 长达 5~40 秒，延迟随机性大
+- 真实 DS18B20 在启动约 1.75 秒后已采集到有效温度，但 UI 未及时刷新
+- 环境温度变化时显示值长时间不更新（如进入/离开空调房后滞后一个完整采样周期)
+- 串口出现 `Subscribe EVT_SENSOR_DATA failed, fallback to polling` 警告但未被留意
+- 切换到 HOME 页能立即显示温度（因 `ui_switch_page_locked()` 直接 `ui_update_locked()` → `draw_home_page()` 强制重绘，绕过计数器节流），进一步掩盖了根因
+
+**解决方案**：
+三层联合修复，从根因到机制逐步打通事件驱动刷新链路。
+
+**1. 调整初始化顺序（`main.c`）**
+将 `event_bus_init()` 前置到 `ui_manager_init()` 之前，确保事件总线先于所有订阅者就绪，并在注释中标注依赖关系：
+
+```c
+// 初始化事件总线（必须先于所有订阅者，否则 event_subscribe 会失败）
+ret = event_bus_init();
+if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Event bus init failed!");
+}
+
+// 初始化 UI 管理器
+ret = ui_manager_init();
+```
+
+**2. 订阅 EVT_SENSOR_DATA 实现事件驱动刷新（`ui_manager.c`）**
+在 `ui_manager_init()` 末尾（`xTaskCreate` 成功后）订阅事件，回调内通过 `xTaskNotify` 唤醒 `ui_task` 走 `UI_NOTIFY_REFRESH` 分支全量刷新：
+
+```c
+static bool  s_temp_notified_once = false;
+static float s_last_notified_temp = 0.0f;
+
+static void on_sensor_data_cb(const event_t *event, void *user_data)
+{
+    (void)event; (void)user_data;
+    health_status_t status = health_get_status();
+    if (status.temp_validity != MEASURE_VALID) return;
+
+    float current = status.temperature;
+    float diff = current - s_last_notified_temp;
+    // 首次必触发；之后温度变化 < 0.05°C（显示值不变）跳过
+    if (s_temp_notified_once && diff > -0.05f && diff < 0.05f) {
+        return;
+    }
+    s_temp_notified_once = true;
+    s_last_notified_temp = current;
+    if (s_ui_task_handle != NULL) {
+        xTaskNotify(s_ui_task_handle, UI_NOTIFY_REFRESH, eSetBits);
+    }
+}
+
+// ui_manager_init() 末尾 xTaskCreate 成功后
+event_subscribe(EVT_SENSOR_DATA, on_sensor_data_cb, NULL);
+```
+
+**3. 使用显示级变化阈值抑制无意义刷新**
+OLED 显示格式 `"%.1fC"`（1 位小数），温度变化 < 0.05°C 时显示内容不变，跳过通知。平稳温度下 DS18B20 量化步进 0.0625°C > 0.05°C，约每 30s 触发一次刷新，但**严格对齐 DS18B20 的每次真实采样完成时刻**，避免读到旧值。
+
+**关键设计考量**：
+1. **不在回调内 `event_unsubscribe`**：`event_bus.c` 分发时已持有非递归互斥锁，回调内 unsubscribe 会死锁并阻塞 100ms 超时。改用静态布尔 `s_temp_notified_once` 短路 + 温度数值比较决定是否 notify。
+2. **订阅时机**：放在 `xTaskCreate` 成功之后，确保 `s_ui_task_handle` 非 NULL；回调内仍加 NULL 保护。
+3. **保留原有轮询兜底**：不删除 30s/3s 计数器，万一事件链中断仍能恢复。
+4. **不引入 `<math.h>`**：用 `diff > -x && diff < x` 替代 `fabsf()`，避免新增依赖。
+5. **初始化顺序依赖显式标注**：在 `main.c` 注释中明确 `event_bus_init()` 必须先于所有订阅者，防止后续重构再次打乱顺序。
+
+**验证方法**：
+- 串口日志应**不再**出现 `Subscribe EVT_SENSOR_DATA failed` 警告
+- OLED 温度应在开机后约 1.8~2 秒内稳定显示实际温度值
+- 环境温度持续变化时（如用嘴呵气），OLED 显示值应在 <1 秒内跟随变化
+
+**涉及文件**：
+- `main/main.c`
+- `components/ui_manager/ui_manager.c`
