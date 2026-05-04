@@ -17,7 +17,7 @@ extern "C" {
 // ============== 算法参数 ==============
 
 #define PEDOMETER_THRESHOLD_LOW     16200   // 峰值检测下阈值 (原始LSB, 静止≈16384)
-#define PEDOMETER_THRESHOLD_HIGH    17100   // 峰值检测上阈值 (原始LSB, 行走峰值≈17000-19000)
+#define PEDOMETER_THRESHOLD_HIGH    18000   // 峰值检测上阈值 (原始LSB, 行走峰值≈17000-19000)
 #define PEDOMETER_MIN_INTERVAL_MS   250     // 最小步间隔 (ms)
 #define PEDOMETER_MAX_INTERVAL_MS   2000    // 最大步间隔 (ms)
 
