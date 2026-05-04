@@ -18,7 +18,7 @@ extern "C" {
 // 常规采样间隔 (ms)
 #define SENSOR_TEMP_NORMAL_INTERVAL     30000   // 环境温度: 30秒
 #define SENSOR_HR_NORMAL_INTERVAL       480000  // 心率血氧: 480秒(8分钟)
-#define SENSOR_IMU_NORMAL_INTERVAL      20      // IMU: 50Hz (20ms)
+#define SENSOR_IMU_NORMAL_INTERVAL      10      // IMU: 100Hz (10ms)
 
 // 心率测量窗口配置
 #define SENSOR_HR_MEASURE_WINDOW_MS     15000   // 15秒测量窗口

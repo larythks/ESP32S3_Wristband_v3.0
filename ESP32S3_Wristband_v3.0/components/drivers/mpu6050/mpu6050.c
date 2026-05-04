@@ -42,15 +42,15 @@ esp_err_t mpu6050_init(void)
     }
 
     // 设置采样率分频器 (Sample Rate = 1kHz / (1 + SMPLRT_DIV))
-    ret = i2c_bus_write_byte_port(I2C_BUS0_NUM, MPU6050_I2C_ADDR, MPU6050_REG_SMPLRT_DIV, 19);
+    ret = i2c_bus_write_byte_port(I2C_BUS0_NUM, MPU6050_I2C_ADDR, MPU6050_REG_SMPLRT_DIV, 9);
     if (ret != ESP_OK) return ret;
 
     // 配置数字低通滤波器
-    ret = i2c_bus_write_byte_port(I2C_BUS0_NUM, MPU6050_I2C_ADDR, MPU6050_REG_CONFIG, 0x01);
+    ret = i2c_bus_write_byte_port(I2C_BUS0_NUM, MPU6050_I2C_ADDR, MPU6050_REG_CONFIG, 0x03);
     if (ret != ESP_OK) return ret;
 
-    // 设置加速度量程 ±2g
-    ret = mpu6050_set_accel_fs(MPU6050_ACCEL_FS_2G);
+    // 设置加速度量程 ±8g
+    ret = mpu6050_set_accel_fs(MPU6050_ACCEL_FS_8G);
     if (ret != ESP_OK) return ret;
 
     // 设置陀螺仪量程 ±250°/s

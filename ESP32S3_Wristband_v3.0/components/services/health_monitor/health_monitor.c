@@ -143,6 +143,7 @@ static health_monitor_ctx_t s_ctx = {0};
 // ============== 前向声明 ==============
 
 static void on_sensor_data(const event_t *event, void *user_data);
+static void on_imu_data(const event_t *event, void *user_data);
 static void process_ppg_data(uint32_t red, uint32_t ir, bool motion_active);
 static void detect_peak(float filtered_value);
 static void process_temp_data(float temp, uint32_t timestamp);
@@ -194,6 +195,13 @@ esp_err_t health_monitor_start(void)
         return ret;
     }
 
+    // 订阅高频 IMU 数据事件（用于运动检测）
+    ret = event_subscribe(EVT_IMU_DATA, on_imu_data, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to subscribe IMU data event");
+        return ret;
+    }
+
     s_ctx.running = true;
     ESP_LOGI(TAG, "Health monitor started");
     return ESP_OK;
@@ -206,6 +214,7 @@ esp_err_t health_monitor_stop(void)
     }
 
     event_unsubscribe(EVT_SENSOR_DATA, on_sensor_data);
+    event_unsubscribe(EVT_IMU_DATA, on_imu_data);
     s_ctx.running = false;
     ESP_LOGI(TAG, "Health monitor stopped");
     return ESP_OK;
@@ -243,18 +252,6 @@ static void on_sensor_data(const event_t *event, void *user_data)
     // 处理环境温度数据
     if (data->temperature > 0) {
         process_temp_data(data->temperature, timestamp);
-    }
-
-    // ---- 运动检测 (利用 IMU 加速度) ----
-    if (data->data_valid & SENSOR_IMU) {
-        int32_t ax = data->accel_x;
-        int32_t ay = data->accel_y;
-        int32_t az = data->accel_z;
-        uint32_t mag_sq = (uint32_t)(ax * ax + ay * ay + az * az);
-        uint32_t gravity_sq = (uint32_t)MOTION_GRAVITY_REF * MOTION_GRAVITY_REF;
-        int32_t diff = (int32_t)mag_sq - (int32_t)gravity_sq;
-        int32_t thresh_sq = 2 * MOTION_GRAVITY_REF * MOTION_THRESHOLD;
-        s_ctx.motion_active = (diff > thresh_sq || diff < -thresh_sq);
     }
 
     // ---- 心率测量窗口处理 ----
@@ -362,6 +359,28 @@ static void on_sensor_data(const event_t *event, void *user_data)
 
     // 检查告警
     check_alerts(timestamp);
+}
+
+/**
+ * @brief IMU 数据事件回调 - 运动检测（高频 50Hz）
+ */
+static void on_imu_data(const event_t *event, void *user_data)
+{
+    (void)user_data;
+
+    if (!s_ctx.running || event == NULL) {
+        return;
+    }
+
+    const imu_data_t *data = &event->data.imu;
+    int32_t ax = data->accel_x;
+    int32_t ay = data->accel_y;
+    int32_t az = data->accel_z;
+    uint32_t mag_sq = (uint32_t)(ax * ax + ay * ay + az * az);
+    uint32_t gravity_sq = (uint32_t)MOTION_GRAVITY_REF * MOTION_GRAVITY_REF;
+    int32_t diff = (int32_t)mag_sq - (int32_t)gravity_sq;
+    int32_t thresh_sq = 2 * MOTION_GRAVITY_REF * MOTION_THRESHOLD;
+    s_ctx.motion_active = (diff > thresh_sq || diff < -thresh_sq);
 }
 
 // ============== 环境温度处理 ==============

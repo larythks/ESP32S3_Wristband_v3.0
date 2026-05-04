@@ -34,7 +34,7 @@ static pedometer_ctx_t s_ctx = {0};
 
 // ============== 前向声明 ==============
 
-static void on_sensor_data(const event_t *event, void *user_data);
+static void on_imu_data(const event_t *event, void *user_data);
 static void pedometer_feed_data(int16_t ax, int16_t ay, int16_t az, uint32_t timestamp);
 static int32_t calculate_svm(int16_t ax, int16_t ay, int16_t az);
 static int32_t apply_filter(int32_t value);
@@ -66,8 +66,8 @@ esp_err_t pedometer_start(void)
         return ESP_OK;
     }
 
-    // 订阅传感器数据事件
-    esp_err_t ret = event_subscribe(EVT_SENSOR_DATA, on_sensor_data, NULL);
+    // 订阅高频 IMU 数据事件
+    esp_err_t ret = event_subscribe(EVT_IMU_DATA, on_imu_data, NULL);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to subscribe");
         return ret;
@@ -84,7 +84,7 @@ esp_err_t pedometer_stop(void)
         return ESP_OK;
     }
 
-    event_unsubscribe(EVT_SENSOR_DATA, on_sensor_data);
+    event_unsubscribe(EVT_IMU_DATA, on_imu_data);
     s_ctx.running = false;
     ESP_LOGI(TAG, "Pedometer stopped");
     return ESP_OK;
@@ -142,7 +142,7 @@ static void pedometer_feed_data(int16_t ax, int16_t ay, int16_t az, uint32_t tim
 
 // ============== 事件处理 ==============
 
-static void on_sensor_data(const event_t *event, void *user_data)
+static void on_imu_data(const event_t *event, void *user_data)
 {
     (void)user_data;
 
@@ -150,9 +150,9 @@ static void on_sensor_data(const event_t *event, void *user_data)
         return;
     }
 
-    const sensor_data_t *data = &event->data.sensor;
+    const imu_data_t *data = &event->data.imu;
 
-    // 使用加速度数据进行计步
+    // 使用高频加速度数据进行计步
     pedometer_feed_data(data->accel_x, data->accel_y, data->accel_z,
                         data->timestamp);
 }
