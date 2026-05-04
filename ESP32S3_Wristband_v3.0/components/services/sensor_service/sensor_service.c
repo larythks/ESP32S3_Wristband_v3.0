@@ -27,7 +27,7 @@ static const char *TAG = "sensor_svc";
 #define DS18B20_CONVERT_TIME_MS 750
 
 // 事件发布间隔 (ms)
-#define EVENT_PUBLISH_INTERVAL  100
+#define EVENT_PUBLISH_INTERVAL  50
 
 // PPG 环形缓冲区大小（必须是 2 的幂）
 #define PPG_RING_SIZE           64
