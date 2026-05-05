@@ -1526,3 +1526,85 @@ OLED 显示格式 `"%.1fC"`（1 位小数），温度变化 < 0.05°C 时显示�
 **涉及文件**：
 - `main/main.c`
 - `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-052：心率测量偏高 ~15%（实测 86-88 bpm → 输出 ~100 bpm）— PPG 重搏切迹假峰
+
+**发现日期**：2026-05-05
+
+**原因**：
+PPG 波形包含重搏切迹（dicrotic notch），在主收缩峰后约 200-400ms（25Hz 采样率下 5-10 采样点）出现小幅二次波动。原峰值检测算法存在两个缺陷使其将切迹误判为额外心跳：
+
+1. **无不应用**：主峰确认后立即允许追踪下一个上升沿。切迹的微小回升越过阈值 → 状态机切回上升模式 → 切迹回落又触发假峰确认。假峰插入 8-12 采样点短间隔（对应 HR 125-188 bpm）。
+2. **自适应阈值比例偏低**（`ADAPTIVE_THRESH_RATIO = 0.3`）：阈值仅为信号峰峰值的 30%，切迹波动容易穿越。
+
+假峰间隔（8-12）部分越过 `PEAK_MIN_INTERVAL=8` 门槛，且落在中值 ±40% 离群剔除范围内（10-23），无法被滤除，直接拉低平均间隔 → 心率虚高。
+
+以实测 87 bpm 为例：预期间隔 17.2 采样点；若混入 3-4 个 ~11 采样点的假峰间隔，平均间隔降至 ~15 采样点 → HR ≈ 100 bpm，与用户报告完全吻合。
+
+**后果**：
+- 心率测量值系统性偏高 10-18 bpm，影响健康监测数据可信度
+- 偏高幅度因个体 PPG 波形差异而异（切迹强度因人而异）
+
+**解决方案**：
+在 `health_monitor.c` 中三处修改：
+
+1. **新增不应期常量**：`PEAK_REFRACTORY_SAMPLES = 6`（240ms @25Hz），覆盖典型切迹延迟范围
+2. **提高自适应阈值比例**：`ADAPTIVE_THRESH_RATIO` 从 `0.3f` → `0.45f`，要求信号穿越更明确的峰/谷
+3. **谷值确认加入不应期判断**：下降阶段切换上升前，强制检查 `(sample_count - last_peak_sample) >= PEAK_REFRACTORY_SAMPLES`
+
+```c
+// 下降阶段：加入不应期检查
+if ((ppg->sample_count - ppg->last_peak_sample) >= PEAK_REFRACTORY_SAMPLES &&
+    filtered_value - ppg->local_min_value >= threshold) {
+    ppg->rising = true;
+    // ...
+}
+```
+
+**设计考量**：
+- 不应期 6 采样点 + 阈值比例 0.45 的组合，实际心率上限约 150 bpm，满足腕带使用场景
+- `PEAK_MIN_INTERVAL` 保持 8 不变，作为第二道防线
+- 仅修改 `health_monitor.c` 一个文件，影响范围最小
+
+**涉及文件**：
+- `components/services/health_monitor/health_monitor.c`
+
+---
+
+## ISSUE-053：心率计算精度受离散采样点数限制，高铁心率区间跳动量过大
+
+**发现日期**：2026-05-05
+
+**原因**：
+`calculate_heart_rate()` 使用**整数采样点数**作为峰值间隔单位（`uint32_t`），在 25Hz PPG 采样率下每个样本代表 40ms。心率通过 `HR = 60 × 25 / avg_interval_samples`（整数除法）计算，导致输出被量化为离散值：
+
+- 60 BPM 附近：±2~3 BPM 跳动
+- 100 BPM 附近：±6~7 BPM 跳动
+- 120 BPM 附近：**±8~10 BPM 跳动**
+- 150 BPM 附近：±15 BPM 跳动
+- 180 BPM 附近：±23 BPM 跳动
+
+心率越高，整数化误差越显著。根本原因是峰值检测在离散采样域中定位峰值位置，1 个样本的偏差在分母较小时被剧烈放大。
+
+**后果**：
+- 高铁心率区间（>100 BPM）输出跳动量远超临床可接受范围（应 ≤ ±3 BPM）
+- 用户运动后心率从 60 升至 120 BPM 时，数据跳动剧烈，无法提供平滑的监测体验
+- 心率和血氧告警判定依赖稳定的心率值，跳动过大会导致告警误触发或漏触发
+
+**解决方案**：
+在峰值确认时使用**三点抛物线插值**估计峰值的子样本精度位置：
+
+1. **扩展 `ppg_context_t`**：添加 `last_filtered_value`、`peak_prev_value`、`peak_next_value`、`peak_next_pending` 字段；将 `last_peak_sample` 和 `peak_intervals[]` 从 `uint32_t` 改为 `float`
+2. **修改 `detect_peak()`**：在检测到新的局部最大值时保存峰值前后邻居的滤波值；在峰值确认时使用抛物线公式 `offset = (y[i-1] - y[i+1]) / (2*(y[i-1] - 2*y[i] + y[i+1]))` 计算子样本偏移量，并裁剪到 [-0.5, 0.5]；以浮点峰值位置 `peak_pos = local_max_sample + offset` 计算间隔
+3. **修改 `calculate_heart_rate()`**：将间隔数组、排序、中值筛选、平均值全部改用 `float` 运算；心率计算使用 `60.0f * PPG_SAMPLE_RATE_HZ / avg_interval` 浮点除法并四舍五入
+
+**设计考量**：
+- 插值公式分母为 0 时（三点共线）回退为 `offset = 0`
+- 偏移量裁剪到 [-0.5, 0.5] 防止异常值
+- 浮点运算开销微小（每峰值 5~8 次乘加），ESP32-S3 可忽略不计
+- 仅修改 `health_monitor.c` 一个文件，影响范围最小
+
+**涉及文件**：
+- `components/services/health_monitor/health_monitor.c`

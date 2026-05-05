@@ -18,8 +18,8 @@
 
 static const char *TAG = "fall_detect";
 
-// MPU6050 加速度量程转换 (±2g 模式, 16384 LSB/g)
-#define ACCEL_SENSITIVITY   16384.0f
+// MPU6050 加速度量程转换 (±8g 模式, 4096 LSB/g)
+#define ACCEL_SENSITIVITY   4096.0f
 
 // ============================================================================
 // 内部数据结构
@@ -316,17 +316,15 @@ static void process_state_post_impact(const accel_sample_t *sample)
 // ============================================================================
 
 /**
- * @brief 传感器数据事件回调 - 自动接收 IMU 数据进行跌倒检测
+ * @brief IMU 数据事件回调 - 自动接收高频 IMU 数据进行跌倒检测
  */
-static void on_sensor_data(const event_t *event, void *user_data)
+static void on_imu_data(const event_t *event, void *user_data)
 {
     (void)user_data;
     if (!s_ctx.running || event == NULL) return;
 
-    const sensor_data_t *data = &event->data.sensor;
-    if (data->data_valid & SENSOR_IMU) {
-        fall_detect_process(data->accel_x, data->accel_y, data->accel_z);
-    }
+    const imu_data_t *data = &event->data.imu;
+    fall_detect_process(data->accel_x, data->accel_y, data->accel_z);
 }
 
 // ============================================================================
@@ -365,8 +363,8 @@ esp_err_t fall_detect_start(void)
     s_ctx.history_head = 0;
     s_ctx.history_count = 0;
 
-    // 订阅传感器数据事件，自动接收 IMU 数据
-    event_subscribe(EVT_SENSOR_DATA, on_sensor_data, NULL);
+    // 订阅高频 IMU 数据事件
+    event_subscribe(EVT_IMU_DATA, on_imu_data, NULL);
 
     ESP_LOGI(TAG, "Fall detect started");
     return ESP_OK;
@@ -377,7 +375,7 @@ esp_err_t fall_detect_start(void)
  */
 esp_err_t fall_detect_stop(void)
 {
-    event_unsubscribe(EVT_SENSOR_DATA, on_sensor_data);
+    event_unsubscribe(EVT_IMU_DATA, on_imu_data);
     s_ctx.running = false;
     ESP_LOGI(TAG, "Fall detect stopped");
     return ESP_OK;

@@ -217,7 +217,7 @@ static bool sample_hr_spo2(void)
 }
 
 /**
- * @brief 采样 IMU 传感器
+ * @brief 采样 IMU 传感器并立即发布高频事件
  */
 static void sample_imu(void)
 {
@@ -228,6 +228,7 @@ static void sample_imu(void)
     esp_err_t ret2 = mpu6050_read_gyro(&gx, &gy, &gz);
 
     if (ret1 == ESP_OK && ret2 == ESP_OK) {
+        // 更新 latest_data（供 sensor_get_latest 等查询接口使用）
         xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
         s_ctx.latest_data.accel_x = ax;
         s_ctx.latest_data.accel_y = ay;
@@ -237,6 +238,17 @@ static void sample_imu(void)
         s_ctx.latest_data.gyro_z = gz;
         s_ctx.latest_data.data_valid |= SENSOR_IMU;
         xSemaphoreGive(s_ctx.mutex);
+
+        // 立即发布高频 IMU 事件 (100Hz)
+        event_data_t imu_evt;
+        imu_evt.imu.accel_x = ax;
+        imu_evt.imu.accel_y = ay;
+        imu_evt.imu.accel_z = az;
+        imu_evt.imu.gyro_x = gx;
+        imu_evt.imu.gyro_y = gy;
+        imu_evt.imu.gyro_z = gz;
+        imu_evt.imu.timestamp = get_timestamp_ms();
+        event_publish(EVT_IMU_DATA, &imu_evt);
     }
 }
 
@@ -264,7 +276,7 @@ static void sensor_task(void *arg)
         // 心率测量窗口状态机
         switch (s_ctx.hr_measure_state) {
             case HR_MEASURE_IDLE: {
-                // 根据模式选择间隔：实时模式 16秒，正常模式 8分钟
+                // 根据模式选择间隔：实时模式 1秒，正常模式 8分钟
                 uint32_t hr_interval = (s_ctx.hr_mode == SAMPLING_MODE_REALTIME)
                                        ? SENSOR_REALTIME_INTERVAL
                                        : SENSOR_HR_AUTO_INTERVAL_MS;
@@ -303,7 +315,7 @@ static void sensor_task(void *arg)
                 break;
         }
 
-        // IMU 持续采样 (50Hz)
+        // IMU 持续采样 (100Hz)
         sample_imu();
 
         // 更新时间戳
@@ -311,7 +323,7 @@ static void sensor_task(void *arg)
         s_ctx.latest_data.timestamp = now;
         xSemaphoreGive(s_ctx.mutex);
 
-        // 定期发布传感器数据事件
+        // 定期发布传感器数据事件（低频，不含 IMU 原始数据）
         if ((now - s_ctx.last_event_publish) >= EVENT_PUBLISH_INTERVAL) {
             event_data_t evt_data;
             xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
@@ -321,6 +333,14 @@ static void sensor_task(void *arg)
             // 发布后清除 ppg_fresh，避免下次事件误报新数据
             s_ctx.latest_data.ppg_fresh = false;
             xSemaphoreGive(s_ctx.mutex);
+            // 清除 IMU 原始数据（已通过 EVT_IMU_DATA 高频发布）
+            evt_data.sensor.accel_x = 0;
+            evt_data.sensor.accel_y = 0;
+            evt_data.sensor.accel_z = 0;
+            evt_data.sensor.gyro_x = 0;
+            evt_data.sensor.gyro_y = 0;
+            evt_data.sensor.gyro_z = 0;
+            evt_data.sensor.data_valid &= ~SENSOR_IMU;
             event_publish(EVT_SENSOR_DATA, &evt_data);
             s_ctx.last_event_publish = now;
         }

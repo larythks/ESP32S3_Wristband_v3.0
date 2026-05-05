@@ -23,6 +23,7 @@ static const char *TAG = "health_monitor";
 #define PEAK_MIN_INTERVAL       8       // 320ms → ~187bpm
 #define PEAK_MAX_INTERVAL       50      // 2000ms → 30bpm
 #define PEAK_INTERVALS_MAX      16      // 峰值间隔缓冲区大小
+#define PEAK_REFRACTORY_SAMPLES 6       // 峰值不应期 (~240ms @25Hz)，抑制重搏切迹假峰
 
 // IIR 滤波器参数 (Fs = 25Hz)
 #define FILTER_HP_ALPHA         0.888f  // 高通截止 ~0.5Hz
@@ -30,13 +31,13 @@ static const char *TAG = "health_monitor";
 
 // 自适应阈值参数
 #define ADAPTIVE_WINDOW         50      // 自适应窗口 (~2秒 @25Hz)
-#define ADAPTIVE_THRESH_RATIO   0.3f    // 阈值 = 峰峰值 × 比例
+#define ADAPTIVE_THRESH_RATIO   0.45f   // 阈值 = 峰峰值 × 比例
 #define ADAPTIVE_THRESH_MIN     10.0f   // 最小阈值
 #define FILTER_SETTLE_SAMPLES   25      // 滤波器建立期 (1秒 @25Hz)
 
-// 运动抑制参数 (MPU6050 ±2g, 1g = 16384 LSB)
-#define MOTION_GRAVITY_REF      16384
-#define MOTION_THRESHOLD        2000    // ~0.12g 偏差视为运动
+// 运动抑制参数 (MPU6050 ±8g, 1g = 4096 LSB)
+#define MOTION_GRAVITY_REF      4096
+#define MOTION_THRESHOLD        491    // ~0.12g 偏差视为运动
 #define MOTION_REJECT_PERCENT   50      // 超过50%样本被运动污染则无效
 
 // ============== 内部数据结构 ==============
@@ -70,11 +71,17 @@ typedef struct {
     uint32_t local_max_sample;  // 局部最大值对应的采样序号
     float local_min_value;      // 局部最小值
 
-    // 峰值间隔 (以采样点数为单位)
-    uint32_t last_peak_sample;  // 上次确认峰值的采样序号
-    uint32_t peak_intervals[PEAK_INTERVALS_MAX];
+    // 峰值间隔 (子样本精度，使用浮点插值)
+    float last_peak_sample;     // 上次确认峰值的精确位置
+    float peak_intervals[PEAK_INTERVALS_MAX];
     uint8_t interval_index;
     uint8_t interval_count;
+
+    // 峰值子样本插值 (三点抛物线插值)
+    float last_filtered_value;  // 上一采样点的滤波值
+    float peak_prev_value;      // 峰值前一样本的滤波值
+    float peak_next_value;      // 峰值后一样本的滤波值
+    bool peak_next_pending;     // 等待下一采样点捕获 peak_next
 
     // AC/DC 分量 (最终计算结果, 使用 float 避免精度丢失)
     float red_ac;
@@ -143,6 +150,7 @@ static health_monitor_ctx_t s_ctx = {0};
 // ============== 前向声明 ==============
 
 static void on_sensor_data(const event_t *event, void *user_data);
+static void on_imu_data(const event_t *event, void *user_data);
 static void process_ppg_data(uint32_t red, uint32_t ir, bool motion_active);
 static void detect_peak(float filtered_value);
 static void process_temp_data(float temp, uint32_t timestamp);
@@ -194,6 +202,13 @@ esp_err_t health_monitor_start(void)
         return ret;
     }
 
+    // 订阅高频 IMU 数据事件（用于运动检测）
+    ret = event_subscribe(EVT_IMU_DATA, on_imu_data, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to subscribe IMU data event");
+        return ret;
+    }
+
     s_ctx.running = true;
     ESP_LOGI(TAG, "Health monitor started");
     return ESP_OK;
@@ -206,6 +221,7 @@ esp_err_t health_monitor_stop(void)
     }
 
     event_unsubscribe(EVT_SENSOR_DATA, on_sensor_data);
+    event_unsubscribe(EVT_IMU_DATA, on_imu_data);
     s_ctx.running = false;
     ESP_LOGI(TAG, "Health monitor stopped");
     return ESP_OK;
@@ -243,18 +259,6 @@ static void on_sensor_data(const event_t *event, void *user_data)
     // 处理环境温度数据
     if (data->temperature > 0) {
         process_temp_data(data->temperature, timestamp);
-    }
-
-    // ---- 运动检测 (利用 IMU 加速度) ----
-    if (data->data_valid & SENSOR_IMU) {
-        int32_t ax = data->accel_x;
-        int32_t ay = data->accel_y;
-        int32_t az = data->accel_z;
-        uint32_t mag_sq = (uint32_t)(ax * ax + ay * ay + az * az);
-        uint32_t gravity_sq = (uint32_t)MOTION_GRAVITY_REF * MOTION_GRAVITY_REF;
-        int32_t diff = (int32_t)mag_sq - (int32_t)gravity_sq;
-        int32_t thresh_sq = 2 * MOTION_GRAVITY_REF * MOTION_THRESHOLD;
-        s_ctx.motion_active = (diff > thresh_sq || diff < -thresh_sq);
     }
 
     // ---- 心率测量窗口处理 ----
@@ -364,6 +368,28 @@ static void on_sensor_data(const event_t *event, void *user_data)
     check_alerts(timestamp);
 }
 
+/**
+ * @brief IMU 数据事件回调 - 运动检测（高频 100Hz）
+ */
+static void on_imu_data(const event_t *event, void *user_data)
+{
+    (void)user_data;
+
+    if (!s_ctx.running || event == NULL) {
+        return;
+    }
+
+    const imu_data_t *data = &event->data.imu;
+    int32_t ax = data->accel_x;
+    int32_t ay = data->accel_y;
+    int32_t az = data->accel_z;
+    uint32_t mag_sq = (uint32_t)(ax * ax + ay * ay + az * az);
+    uint32_t gravity_sq = (uint32_t)MOTION_GRAVITY_REF * MOTION_GRAVITY_REF;
+    int32_t diff = (int32_t)mag_sq - (int32_t)gravity_sq;
+    int32_t thresh_sq = 2 * MOTION_GRAVITY_REF * MOTION_THRESHOLD;
+    s_ctx.motion_active = (diff > thresh_sq || diff < -thresh_sq);
+}
+
 // ============== 环境温度处理 ==============
 
 static void process_temp_data(float temp, uint32_t timestamp)
@@ -411,15 +437,21 @@ static void process_temp_data(float temp, uint32_t timestamp)
 // ============== PPG 数据处理 ==============
 
 /**
- * @brief 自适应峰值检测 (使用滤波后信号)
+ * @brief 自适应峰值检测 (使用滤波后信号) + 三点抛物线插值
  *
- * 算法：跟踪局部最大/最小值，当信号从最大值回落超过自适应阈值时
- * 确认峰值；当信号从最小值回升超过阈值时确认谷值。
+ * 在峰值确认时，利用峰值样本及其前后邻居进行抛物线插值，
+ * 估计峰值的子样本精度位置，将心率分辨率从 ±N bpm 降至 ±1 bpm。
  */
 static void detect_peak(float filtered_value)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
     ppg->sample_count++;
+
+    // 捕获上一峰值设置的 peak_next (当前采样点即为峰值后一样本)
+    if (ppg->peak_next_pending) {
+        ppg->peak_next_value = filtered_value;
+        ppg->peak_next_pending = false;
+    }
 
     // 更新自适应窗口缓冲区
     ppg->adapt_buffer[ppg->adapt_index] = filtered_value;
@@ -450,22 +482,37 @@ static void detect_peak(float filtered_value)
         ppg->local_min_value = filtered_value;
         ppg->local_max_sample = ppg->sample_count;
         ppg->rising = true;
+        ppg->last_filtered_value = filtered_value;
         return;
     }
 
     if (ppg->rising) {
         // 上升阶段：跟踪局部最大值
         if (filtered_value > ppg->local_max_value) {
+            ppg->peak_prev_value = ppg->last_filtered_value;
+            ppg->peak_next_pending = true;
             ppg->local_max_value = filtered_value;
             ppg->local_max_sample = ppg->sample_count;
         }
-        // 从局部最大值回落超过阈值 → 确认峰值
+        // 从局部最大值回落超过阈值 → 确认峰值（三点抛物线插值）
         if (ppg->local_max_value - filtered_value >= threshold) {
-            uint32_t interval = ppg->local_max_sample - ppg->last_peak_sample;
+            // 抛物线插值估计子样本峰值位置: offset = (y[i-1] - y[i+1]) / (2*(y[i-1] - 2*y[i] + y[i+1]))
+            float offset = 0.0f;
+            float y_prev = ppg->peak_prev_value;
+            float y_peak = ppg->local_max_value;
+            float y_next = ppg->peak_next_value;
+            float denom = 2.0f * (y_prev - 2.0f * y_peak + y_next);
+            if (fabsf(denom) > 1e-6f) {
+                offset = (y_prev - y_next) / denom;
+                if (offset > 0.5f) offset = 0.5f;
+                if (offset < -0.5f) offset = -0.5f;
+            }
+            float peak_pos = (float)ppg->local_max_sample + offset;
+            float interval = peak_pos - ppg->last_peak_sample;
 
-            if (ppg->last_peak_sample > 0 &&
-                interval >= PEAK_MIN_INTERVAL &&
-                interval <= PEAK_MAX_INTERVAL) {
+            if (ppg->last_peak_sample > 0.0f &&
+                interval >= (float)PEAK_MIN_INTERVAL &&
+                interval <= (float)PEAK_MAX_INTERVAL) {
                 ppg->peak_intervals[ppg->interval_index] = interval;
                 ppg->interval_index = (ppg->interval_index + 1) % PEAK_INTERVALS_MAX;
                 if (ppg->interval_count < PEAK_INTERVALS_MAX) {
@@ -473,7 +520,7 @@ static void detect_peak(float filtered_value)
                 }
             }
 
-            ppg->last_peak_sample = ppg->local_max_sample;
+            ppg->last_peak_sample = peak_pos;
             ppg->rising = false;
             ppg->local_min_value = filtered_value;
         }
@@ -483,12 +530,18 @@ static void detect_peak(float filtered_value)
             ppg->local_min_value = filtered_value;
         }
         // 从局部最小值回升超过阈值 → 确认谷值，开始新的上升
-        if (filtered_value - ppg->local_min_value >= threshold) {
+        // 加入不应期检查：主峰确认后 N 样本内禁止回升，抑制重搏切迹假峰
+        if ((ppg->sample_count - ppg->last_peak_sample) >= PEAK_REFRACTORY_SAMPLES &&
+            filtered_value - ppg->local_min_value >= threshold) {
             ppg->rising = true;
+            ppg->peak_prev_value = ppg->last_filtered_value;
+            ppg->peak_next_pending = true;
             ppg->local_max_value = filtered_value;
             ppg->local_max_sample = ppg->sample_count;
         }
     }
+
+    ppg->last_filtered_value = filtered_value;
 }
 
 /**
@@ -598,11 +651,11 @@ static void calculate_ac_dc(void)
 // ============== 心率计算 ==============
 
 /**
- * @brief 心率计算：中值离群值剔除 + 平均
+ * @brief 心率计算：中值离群值剔除 + 平均（浮点间隔，支持子样本精度）
  *
- * 1. 对所有峰值间隔排序，取中值
- * 2. 剔除偏离中值 ±30% 的异常间隔
- * 3. 对剩余有效间隔取平均，转换为 BPM
+ * 1. 对所有峰值间隔（float）排序，取中值
+ * 2. 剔除偏离中值 ±40% 的异常间隔
+ * 3. 对剩余有效间隔取平均，转换为 BPM（四舍五入）
  */
 static uint8_t calculate_heart_rate(void)
 {
@@ -613,7 +666,7 @@ static uint8_t calculate_heart_rate(void)
     }
 
     // 提取间隔到临时数组
-    uint32_t intervals[PEAK_INTERVALS_MAX];
+    float intervals[PEAK_INTERVALS_MAX];
     uint8_t n = ppg->interval_count;
     for (uint8_t i = 0; i < n; i++) {
         intervals[i] = ppg->peak_intervals[i];
@@ -623,7 +676,7 @@ static uint8_t calculate_heart_rate(void)
     for (uint8_t i = 0; i < n - 1; i++) {
         for (uint8_t j = 0; j < n - 1 - i; j++) {
             if (intervals[j] > intervals[j + 1]) {
-                uint32_t tmp = intervals[j];
+                float tmp = intervals[j];
                 intervals[j] = intervals[j + 1];
                 intervals[j + 1] = tmp;
             }
@@ -631,16 +684,16 @@ static uint8_t calculate_heart_rate(void)
     }
 
     // 中值
-    uint32_t median = intervals[n / 2];
-    if (median == 0) {
+    float median = intervals[n / 2];
+    if (median < 0.5f) {
         return 0;
     }
 
     // 剔除偏离中值 ±40% 的离群值
-    uint32_t low_bound  = median * 60 / 100;
-    uint32_t high_bound = median * 140 / 100;
+    float low_bound  = median * 0.6f;
+    float high_bound = median * 1.4f;
 
-    uint32_t sum = 0;
+    float sum = 0.0f;
     uint8_t valid = 0;
     for (uint8_t i = 0; i < n; i++) {
         if (intervals[i] >= low_bound && intervals[i] <= high_bound) {
@@ -653,19 +706,19 @@ static uint8_t calculate_heart_rate(void)
         return 0;
     }
 
-    uint32_t avg_interval = sum / valid;
-    if (avg_interval == 0) {
+    float avg_interval = sum / (float)valid;
+    if (avg_interval < 0.5f) {
         return 0;
     }
 
-    // 采样点数 → BPM: hr = 60 × Fs / avg_interval
-    uint32_t hr = 60 * PPG_SAMPLE_RATE_HZ / avg_interval;
+    // 采样点数 → BPM: hr = 60 × Fs / avg_interval (四舍五入)
+    float hr = 60.0f * (float)PPG_SAMPLE_RATE_HZ / avg_interval;
 
-    if (hr < 30 || hr > 200) {
+    if (hr < 30.0f || hr > 200.0f) {
         return 0;
     }
 
-    return (uint8_t)hr;
+    return (uint8_t)(hr + 0.5f);
 }
 
 // ============== 血氧计算 ==============
