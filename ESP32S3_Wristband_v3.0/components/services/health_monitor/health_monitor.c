@@ -34,9 +34,9 @@ static const char *TAG = "health_monitor";
 #define ADAPTIVE_THRESH_MIN     10.0f   // 最小阈值
 #define FILTER_SETTLE_SAMPLES   25      // 滤波器建立期 (1秒 @25Hz)
 
-// 运动抑制参数 (MPU6050 ±2g, 1g = 16384 LSB)
-#define MOTION_GRAVITY_REF      16384
-#define MOTION_THRESHOLD        2000    // ~0.12g 偏差视为运动
+// 运动抑制参数 (MPU6050 ±8g, 1g = 4096 LSB)
+#define MOTION_GRAVITY_REF      4096
+#define MOTION_THRESHOLD        491    // ~0.12g 偏差视为运动
 #define MOTION_REJECT_PERCENT   50      // 超过50%样本被运动污染则无效
 
 // ============== 内部数据结构 ==============
@@ -362,7 +362,7 @@ static void on_sensor_data(const event_t *event, void *user_data)
 }
 
 /**
- * @brief IMU 数据事件回调 - 运动检测（高频 50Hz）
+ * @brief IMU 数据事件回调 - 运动检测（高频 100Hz）
  */
 static void on_imu_data(const event_t *event, void *user_data)
 {
