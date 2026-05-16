@@ -19,7 +19,7 @@ extern "C" {
 // ============================================================================
 
 // 加速度阈值 (单位: g, 1g = 9.8m/s²)
-#define FALL_IMPACT_THRESHOLD       2.5f    // 冲击阈值 (SVM > 2.5g 判定为冲击)
+#define FALL_IMPACT_THRESHOLD       3.0f    // 冲击阈值 (SVM > 3.0g 判定为冲击)
 #define FALL_FREEFALL_THRESHOLD     0.6f    // 自由落体阈值 (SVM < 0.6g)
 #define FALL_STATIC_LOW             0.8f    // 静止状态下限
 #define FALL_STATIC_HIGH            1.2f    // 静止状态上限

@@ -194,6 +194,10 @@ static void handle_command_response(voice_cmd_id_t cmd)
 
     case VOICE_CMD_QUERY_TEMP: {
         health_status_t status = health_get_status();
+        if (status.temp_validity != MEASURE_VALID) {
+            ESP_LOGW(TAG, "Temperature invalid, validity=%d", status.temp_validity);
+            break;
+        }
         ESP_LOGD(TAG, "Response: temperature = %.1f C", status.temperature);
         tts_speak_temperature(status.temperature);
         break;

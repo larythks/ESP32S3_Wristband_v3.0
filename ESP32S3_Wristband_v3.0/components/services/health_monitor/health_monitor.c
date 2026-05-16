@@ -13,7 +13,6 @@ static const char *TAG = "health_monitor";
 
 // ============== 内部常量 ==============
 
-#define TEMP_FILTER_SIZE        5       // 环境温度滑动平均窗口
 
 // PPG 有效采样率 (MAX30102 100Hz / 4倍FIFO平均 = 25Hz)
 #define PPG_SAMPLE_RATE_HZ      25
@@ -105,10 +104,8 @@ typedef struct {
  * @brief 环境温度监测上下文
  */
 typedef struct {
-    float filter_buffer[TEMP_FILTER_SIZE];
-    uint8_t filter_index;
-    uint8_t filter_count;
     float last_valid_temp;
+    bool has_valid_temp;
 
     // 连续越阈计数
     uint8_t high_count;
@@ -396,36 +393,23 @@ static void process_temp_data(float temp, uint32_t timestamp)
 {
     // 检查温度跳变
     float diff = fabsf(temp - s_ctx.temp.last_valid_temp);
-    if (diff > TEMP_MAX_JUMP && s_ctx.temp.filter_count > 0) {
+    if (diff > TEMP_MAX_JUMP && s_ctx.temp.has_valid_temp) {
         ESP_LOGW(TAG, "Temp jump too large: %.1f -> %.1f",
                  s_ctx.temp.last_valid_temp, temp);
         s_ctx.status.temp_validity = MEASURE_INVALID_UNSTABLE;
         return;
     }
 
-    // 滑动平均滤波
-    s_ctx.temp.filter_buffer[s_ctx.temp.filter_index] = temp;
-    s_ctx.temp.filter_index = (s_ctx.temp.filter_index + 1) % TEMP_FILTER_SIZE;
-    if (s_ctx.temp.filter_count < TEMP_FILTER_SIZE) {
-        s_ctx.temp.filter_count++;
-    }
-
-    // 计算平均值
-    float sum = 0;
-    for (int i = 0; i < s_ctx.temp.filter_count; i++) {
-        sum += s_ctx.temp.filter_buffer[i];
-    }
-    float avg_temp = sum / s_ctx.temp.filter_count;
-
-    s_ctx.temp.last_valid_temp = avg_temp;
-    s_ctx.status.temperature = avg_temp;
+    s_ctx.temp.last_valid_temp = temp;
+    s_ctx.temp.has_valid_temp = true;
+    s_ctx.status.temperature = temp;
     s_ctx.status.temp_validity = MEASURE_VALID;
 
     // 阈值检测
-    if (avg_temp >= TEMP_ALARM_HIGH) {
+    if (temp >= TEMP_ALARM_HIGH) {
         s_ctx.temp.high_count++;
         s_ctx.temp.low_count = 0;
-    } else if (avg_temp <= TEMP_ALARM_LOW) {
+    } else if (temp <= TEMP_ALARM_LOW) {
         s_ctx.temp.low_count++;
         s_ctx.temp.high_count = 0;
     } else {
@@ -689,9 +673,9 @@ static uint8_t calculate_heart_rate(void)
         return 0;
     }
 
-    // 剔除偏离中值 ±40% 的离群值
-    float low_bound  = median * 0.6f;
-    float high_bound = median * 1.4f;
+    // 剔除偏离中值 ±30% 的离群值
+    float low_bound  = median * 0.7f;
+    float high_bound = median * 1.3f;
 
     float sum = 0.0f;
     uint8_t valid = 0;
