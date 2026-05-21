@@ -8,6 +8,7 @@
 
 #include "esp_err.h"
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +31,20 @@ extern "C" {
 
 // WHO_AM_I 期望值
 #define MPU6050_WHO_AM_I_VAL    0x70
+
+// 校准采样数量及 NVS 存储键
+#define MPU6050_CAL_SAMPLES     200
+#define MPU6050_NVS_NAMESPACE   "mpu6050_cal"
+#define MPU6050_NVS_KEY         "cal_data"
+
+/**
+ * @brief MPU6050 校准数据
+ */
+typedef struct {
+    int16_t accel_bias[3]; // [ax, ay, az] 偏置，单位 LSB
+    int16_t gyro_bias[3];  // [gx, gy, gz] 偏置，单位 LSB
+    bool    valid;         // 校准数据是否有效
+} mpu6050_calibration_t;
 
 // 加速度量程配置
 typedef enum {
@@ -91,6 +106,38 @@ esp_err_t mpu6050_set_accel_fs(mpu6050_accel_fs_t fs);
  * @return ESP_OK 成功
  */
 esp_err_t mpu6050_set_gyro_fs(mpu6050_gyro_fs_t fs);
+
+/**
+ * @brief 执行静态一点法校准（设备必须水平静置，Z轴朝上，约1秒阻塞）
+ * @param cal 输出校准数据
+ * @return ESP_OK 成功
+ */
+esp_err_t mpu6050_calibrate(mpu6050_calibration_t *cal);
+
+/**
+ * @brief 运行时设置校准数据（立即生效）
+ * @param cal 校准数据
+ */
+void mpu6050_set_calibration(const mpu6050_calibration_t *cal);
+
+/**
+ * @brief 读取当前生效的校准数据
+ * @param cal 输出校准数据
+ */
+void mpu6050_get_calibration(mpu6050_calibration_t *cal);
+
+/**
+ * @brief 将校准数据写入 NVS 持久化
+ * @param cal 校准数据
+ * @return ESP_OK 成功
+ */
+esp_err_t mpu6050_save_calibration(const mpu6050_calibration_t *cal);
+
+/**
+ * @brief 从 NVS 加载校准数据并立即应用（无数据则零偏置运行）
+ * @return ESP_OK 成功，ESP_ERR_NOT_FOUND 无校准数据
+ */
+esp_err_t mpu6050_load_calibration(void);
 
 #ifdef __cplusplus
 }

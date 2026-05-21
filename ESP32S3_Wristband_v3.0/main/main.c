@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -25,6 +26,9 @@
 #include "voice_cmd.h"
 
 static const char *TAG = "main";
+
+// 设为 1 时仅运行 MPU6050 校准验证，跳过所有其他初始化；验证完改回 0
+#define MPU6050_CAL_VERIFY  0
 
 #define RTC_BOOT_WAIT_TIMEOUT_MS      3000
 #define RTC_BOOT_RETRY_DELAY_MS         50
@@ -177,6 +181,38 @@ void app_main(void)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "MPU6050 init failed!");
     }
+
+    // 首次启动时无 NVS 校准数据，自动执行一次静态校准
+    mpu6050_calibration_t cal;
+    mpu6050_get_calibration(&cal);
+    if (!cal.valid) {
+        ESP_LOGI(TAG, "No MPU6050 calibration data. Place device flat (Z-up), calibrating in 3s...");
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        if (mpu6050_calibrate(&cal) == ESP_OK) {
+            mpu6050_save_calibration(&cal);
+            ESP_LOGI(TAG, "Calibration saved: a_bias=[%d,%d,%d] g_bias=[%d,%d,%d]",
+                     cal.accel_bias[0], cal.accel_bias[1], cal.accel_bias[2],
+                     cal.gyro_bias[0],  cal.gyro_bias[1],  cal.gyro_bias[2]);
+        } else {
+            ESP_LOGW(TAG, "Calibration failed, running with zero bias");
+        }
+    }
+
+#if MPU6050_CAL_VERIFY
+    ESP_LOGI(TAG, "=== MPU6050 Calibration Verify Mode ===");
+    ESP_LOGI(TAG, "Place device flat Z-up: expect ax≈0 ay≈0 az≈4096 SVM≈1.000g");
+    while (1) {
+        int16_t ax, ay, az, gx, gy, gz;
+        if (mpu6050_read_accel(&ax, &ay, &az) == ESP_OK &&
+            mpu6050_read_gyro(&gx, &gy, &gz)  == ESP_OK) {
+            float svm = sqrtf((float)ax*ax + (float)ay*ay + (float)az*az) / 4096.0f;
+            ESP_LOGI(TAG, "A=[%6d,%6d,%6d]  G=[%6d,%6d,%6d]  SVM=%.3fg",
+                     ax, ay, az, gx, gy, gz, svm);
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    return; // 不执行后续任何初始化
+#endif
 
     // 初始化 SH1106 OLED
     ret = sh1106_init();

@@ -34,9 +34,12 @@ static const char *TAG = "health_monitor";
 #define ADAPTIVE_THRESH_MIN     10.0f   // 最小阈值
 #define FILTER_SETTLE_SAMPLES   25      // 滤波器建立期 (1秒 @25Hz)
 
+// 零相位滤波缓冲区大小 (15s × 25Hz = 375, 向上取整留余量)
+#define PPG_WINDOW_MAX_SAMPLES  400
+
 // 运动抑制参数 (MPU6050 ±8g, 1g = 4096 LSB)
 #define MOTION_GRAVITY_REF      4096
-#define MOTION_THRESHOLD        491    // ~0.12g 偏差视为运动
+#define MOTION_THRESHOLD        819    // ~0.20g 偏差视为运动
 #define MOTION_REJECT_PERCENT   50      // 超过50%样本被运动污染则无效
 
 // ============== 内部数据结构 ==============
@@ -45,18 +48,15 @@ static const char *TAG = "health_monitor";
  * @brief 心率血氧计算上下文
  */
 typedef struct {
-    // IIR 滤波器状态 (IR 通道 - 用于峰值检测)
-    float hp_prev_in;           // 高通前一输入
-    float hp_prev_out;          // 高通前一输出
-    float lp_prev_out;          // 低通前一输出
-    bool filter_initialized;
+    // 原始采样缓冲区 (窗口内逐样本存储, 窗口结束时批量 filtfilt)
+    float    ir_raw_buf[PPG_WINDOW_MAX_SAMPLES];
+    float    red_raw_buf[PPG_WINDOW_MAX_SAMPLES];
+    float    ir_filt_buf[PPG_WINDOW_MAX_SAMPLES];   // filtfilt 输出 (IR)
+    float    red_filt_buf[PPG_WINDOW_MAX_SAMPLES];  // filtfilt 输出 (RED)
+    bool     motion_flags[PPG_WINDOW_MAX_SAMPLES];  // 对应样本是否为运动干扰
+    uint16_t raw_count;                             // 当前窗口已存储样本数
 
-    // IIR 滤波器状态 (RED 通道 - 用于 AC 计算)
-    float red_hp_prev_in;
-    float red_hp_prev_out;
-    float red_lp_prev_out;
-
-    // 采样计数 (用于替代时间戳)
+    // 采样计数 (detect_peak 内部索引, 仅计非运动样本)
     uint32_t sample_count;
 
     // 自适应阈值：滑动窗口跟踪滤波后信号
@@ -88,16 +88,13 @@ typedef struct {
     float ir_ac;
     float ir_dc;
 
-    // 增量式 AC/DC 累加器 (在 process_ppg_data 中逐样本累加)
-    double red_filt_sq_sum;     // RED 滤波后信号的平方和 (用于 AC)
-    double ir_filt_sq_sum;      // IR 滤波后信号的平方和 (用于 AC)
-    uint64_t red_raw_sum;       // RED 原始值累加 (用于 DC)
-    uint64_t ir_raw_sum;        // IR 原始值累加 (用于 DC)
-    uint32_t valid_sample_count; // 非运动样本计数 (排除建立期)
-    uint32_t filter_settle_count; // 总采样计数 (含建立期, 用于判断滤波器是否稳定)
-
     // 运动抑制统计
     uint32_t motion_reject_count;
+
+    // 逐拍峰峰值统计 (SpO2 AC 计算用)
+    uint16_t local_max_raw_idx;                          // local_max_value 对应 raw buffer 索引
+    uint16_t peak_raw_positions[PEAK_INTERVALS_MAX + 1]; // 已确认峰值的 raw 索引
+    uint8_t  peak_pos_count;                             // 已记录的峰值数量
 } ppg_context_t;
 
 /**
@@ -148,8 +145,9 @@ static health_monitor_ctx_t s_ctx = {0};
 
 static void on_sensor_data(const event_t *event, void *user_data);
 static void on_imu_data(const event_t *event, void *user_data);
-static void process_ppg_data(uint32_t red, uint32_t ir, bool motion_active);
-static void detect_peak(float filtered_value);
+static void store_ppg_sample(uint32_t red, uint32_t ir, bool motion_active);
+static void filtfilt_bandpass(const float *in, float *out, uint16_t n);
+static void detect_peak(float filtered_value, uint16_t raw_idx);
 static void process_temp_data(float temp, uint32_t timestamp);
 static void check_alerts(uint32_t timestamp);
 static void calculate_ac_dc(void);
@@ -274,7 +272,7 @@ static void on_sensor_data(const event_t *event, void *user_data)
         ppg_batch_t batch;
         if (sensor_drain_ppg(&batch) == ESP_OK && batch.count > 0) {
             for (uint8_t i = 0; i < batch.count; i++) {
-                process_ppg_data(batch.red[i], batch.ir[i], s_ctx.motion_active);
+                store_ppg_sample(batch.red[i], batch.ir[i], s_ctx.motion_active);
             }
         }
     } else {
@@ -287,12 +285,12 @@ static void on_sensor_data(const event_t *event, void *user_data)
             ppg_batch_t batch;
             if (sensor_drain_ppg(&batch) == ESP_OK && batch.count > 0) {
                 for (uint8_t i = 0; i < batch.count; i++) {
-                    process_ppg_data(batch.red[i], batch.ir[i], s_ctx.motion_active);
+                    store_ppg_sample(batch.red[i], batch.ir[i], s_ctx.motion_active);
                 }
             }
 
             // 检查运动污染比例
-            uint32_t total = s_ctx.ppg.sample_count;
+            uint32_t total = s_ctx.ppg.raw_count;
             uint32_t rejected = s_ctx.ppg.motion_reject_count;
             bool too_much_motion = (total > 0 &&
                                     rejected * 100 / total > MOTION_REJECT_PERCENT);
@@ -303,6 +301,17 @@ static void on_sensor_data(const event_t *event, void *user_data)
                 ESP_LOGW(TAG, "Too much motion: %u/%u samples rejected",
                          (unsigned)rejected, (unsigned)total);
             } else {
+                // 零相位前向-反向滤波
+                filtfilt_bandpass(s_ctx.ppg.ir_raw_buf, s_ctx.ppg.ir_filt_buf, s_ctx.ppg.raw_count);
+                filtfilt_bandpass(s_ctx.ppg.red_raw_buf, s_ctx.ppg.red_filt_buf, s_ctx.ppg.raw_count);
+
+                // 批量峰值检测（跳过运动样本）
+                for (uint16_t i = 0; i < s_ctx.ppg.raw_count; i++) {
+                    if (!s_ctx.ppg.motion_flags[i]) {
+                        detect_peak(s_ctx.ppg.ir_filt_buf[i], i);
+                    }
+                }
+
                 // 计算 AC/DC 分量
                 calculate_ac_dc();
 
@@ -426,7 +435,7 @@ static void process_temp_data(float temp, uint32_t timestamp)
  * 在峰值确认时，利用峰值样本及其前后邻居进行抛物线插值，
  * 估计峰值的子样本精度位置，将心率分辨率从 ±N bpm 降至 ±1 bpm。
  */
-static void detect_peak(float filtered_value)
+static void detect_peak(float filtered_value, uint16_t raw_idx)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
     ppg->sample_count++;
@@ -477,6 +486,7 @@ static void detect_peak(float filtered_value)
             ppg->peak_next_pending = true;
             ppg->local_max_value = filtered_value;
             ppg->local_max_sample = ppg->sample_count;
+            ppg->local_max_raw_idx = raw_idx;
         }
         // 从局部最大值回落超过阈值 → 确认峰值（三点抛物线插值）
         if (ppg->local_max_value - filtered_value >= threshold) {
@@ -505,6 +515,9 @@ static void detect_peak(float filtered_value)
             }
 
             ppg->last_peak_sample = peak_pos;
+            if (ppg->peak_pos_count < PEAK_INTERVALS_MAX + 1) {
+                ppg->peak_raw_positions[ppg->peak_pos_count++] = ppg->local_max_raw_idx;
+            }
             ppg->rising = false;
             ppg->local_min_value = filtered_value;
         }
@@ -522,6 +535,7 @@ static void detect_peak(float filtered_value)
             ppg->peak_next_pending = true;
             ppg->local_max_value = filtered_value;
             ppg->local_max_sample = ppg->sample_count;
+            ppg->local_max_raw_idx = raw_idx;
         }
     }
 
@@ -529,107 +543,146 @@ static void detect_peak(float filtered_value)
 }
 
 /**
- * @brief 处理单个 PPG 样本：带通滤波(IR+RED) → 增量 AC/DC 累加 → 峰值检测
- *
- * 改进：对 RED 和 IR 两个通道都执行 IIR 带通滤波，
- * 滤波后信号的平方和用于 AC 计算（代替原始缓冲区遍历），
- * 运动样本不参与 AC/DC 累加。
+ * @brief 存储单个 PPG 原始样本及运动标记，窗口期间不执行滤波
  */
-static void process_ppg_data(uint32_t red, uint32_t ir, bool motion_active)
+static void store_ppg_sample(uint32_t red, uint32_t ir, bool motion_active)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
+    if (ppg->raw_count >= PPG_WINDOW_MAX_SAMPLES) return;
+    uint16_t idx = ppg->raw_count++;
+    ppg->ir_raw_buf[idx]   = (float)ir;
+    ppg->red_raw_buf[idx]  = (float)red;
+    ppg->motion_flags[idx] = motion_active;
+    if (motion_active) ppg->motion_reject_count++;
+}
 
-    // 对 IR 信号应用带通滤波
-    float ir_f = (float)ir;
-    float red_f = (float)red;
-    float ir_filtered, red_filtered;
+/**
+ * @brief 零相位前向-反向带通滤波 (filtfilt)
+ *
+ * 对长度为 n 的浮点数组执行零相位带通滤波：
+ *   前向 HP→LP → 时序反转 → 前向 HP→LP → 时序反转
+ * 净相位延迟为 0，不会造成峰值位置偏移。
+ */
+static void filtfilt_bandpass(const float *in, float *out, uint16_t n)
+{
+    if (n == 0) return;
 
-    if (!ppg->filter_initialized) {
-        // IR 通道初始化
-        ppg->hp_prev_in = ir_f;
-        ppg->hp_prev_out = 0.0f;
-        ppg->lp_prev_out = 0.0f;
-        // RED 通道初始化
-        ppg->red_hp_prev_in = red_f;
-        ppg->red_hp_prev_out = 0.0f;
-        ppg->red_lp_prev_out = 0.0f;
-        ppg->filter_initialized = true;
-        ir_filtered = 0.0f;
-        red_filtered = 0.0f;
-    } else {
-        // IR 通道：高通 → 低通
-        float ir_hp = FILTER_HP_ALPHA * (ppg->hp_prev_out + ir_f - ppg->hp_prev_in);
-        ppg->hp_prev_in = ir_f;
-        ppg->hp_prev_out = ir_hp;
-        ir_filtered = FILTER_LP_ALPHA * ir_hp + (1.0f - FILTER_LP_ALPHA) * ppg->lp_prev_out;
-        ppg->lp_prev_out = ir_filtered;
-
-        // RED 通道：高通 → 低通
-        float red_hp = FILTER_HP_ALPHA * (ppg->red_hp_prev_out + red_f - ppg->red_hp_prev_in);
-        ppg->red_hp_prev_in = red_f;
-        ppg->red_hp_prev_out = red_hp;
-        red_filtered = FILTER_LP_ALPHA * red_hp + (1.0f - FILTER_LP_ALPHA) * ppg->red_lp_prev_out;
-        ppg->red_lp_prev_out = red_filtered;
+    // 前向 pass: HP(α=0.888) → LP(α=0.501)，用首个样本初始化避免初始瞬态
+    float hp_in = in[0], hp_out = 0.0f, lp_out = 0.0f;
+    for (uint16_t i = 0; i < n; i++) {
+        float hp = FILTER_HP_ALPHA * (hp_out + in[i] - hp_in);
+        hp_in  = in[i];
+        hp_out = hp;
+        lp_out = FILTER_LP_ALPHA * hp + (1.0f - FILTER_LP_ALPHA) * lp_out;
+        out[i] = lp_out;
     }
 
-    // 跟踪总采样数 (用于判断滤波器建立期, 在运动检查之前)
-    ppg->filter_settle_count++;
-
-    // 运动期间：维护滤波器状态但跳过峰值检测和 AC/DC 累加
-    if (motion_active) {
-        ppg->motion_reject_count++;
-        return;
+    // 时序反转
+    for (uint16_t i = 0; i < n / 2; i++) {
+        float tmp      = out[i];
+        out[i]         = out[n - 1 - i];
+        out[n - 1 - i] = tmp;
     }
 
-    // 滤波器建立期后才累加 AC/DC (前 1 秒输出不稳定)
-    if (ppg->filter_settle_count > FILTER_SETTLE_SAMPLES) {
-        // 累加 AC 分量：滤波后信号的平方和
-        ppg->red_filt_sq_sum += (double)red_filtered * red_filtered;
-        ppg->ir_filt_sq_sum  += (double)ir_filtered * ir_filtered;
-
-        // 累加 DC 分量：原始值求和
-        ppg->red_raw_sum += red;
-        ppg->ir_raw_sum  += ir;
-        ppg->valid_sample_count++;
+    // 反向 pass（对反转后数组再次前向滤波）
+    hp_in = out[0]; hp_out = 0.0f; lp_out = 0.0f;
+    for (uint16_t i = 0; i < n; i++) {
+        float hp = FILTER_HP_ALPHA * (hp_out + out[i] - hp_in);
+        hp_in  = out[i];
+        hp_out = hp;
+        lp_out = FILTER_LP_ALPHA * hp + (1.0f - FILTER_LP_ALPHA) * lp_out;
+        out[i] = lp_out;
     }
 
-    // 对 IR 滤波后信号执行自适应峰值检测
-    detect_peak(ir_filtered);
+    // 再次时序反转 → 最终零相位输出
+    for (uint16_t i = 0; i < n / 2; i++) {
+        float tmp      = out[i];
+        out[i]         = out[n - 1 - i];
+        out[n - 1 - i] = tmp;
+    }
 }
 
 // ============== AC/DC 分量计算 ==============
 
 /**
- * @brief 计算 PPG 的 AC/DC 分量（使用增量累加值）
+ * @brief 计算 PPG 的 AC/DC 分量（从 filtfilt 输出缓冲区遍历计算）
  *
- * DC = 原始值均值 (raw_sum / valid_count)
- * AC = RMS(滤波信号) × 2√2
- *
- * 使用滤波后信号计算 AC 可以排除基线漂移和高频噪声的影响，
- * 运动样本已在 process_ppg_data 中被排除，不参与累加。
+ * DC = 非运动样本原始值均值
+ * AC = 逐拍峰峰值均值（IR 谷底位置同步读取 RED，与 Maxim 校准方法一致）
  */
 static void calculate_ac_dc(void)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
+    uint16_t n = ppg->raw_count;
 
-    if (ppg->valid_sample_count < 50) {
-        ESP_LOGW(TAG, "Too few valid PPG samples: %u", (unsigned)ppg->valid_sample_count);
+    double red_raw_sum = 0.0, ir_raw_sum = 0.0;
+    uint32_t valid = 0;
+
+    for (uint16_t i = 0; i < n; i++) {
+        if (!ppg->motion_flags[i]) {
+            red_raw_sum += ppg->red_raw_buf[i];
+            ir_raw_sum  += ppg->ir_raw_buf[i];
+            valid++;
+        }
+    }
+
+    if (valid < 50) {
+        ESP_LOGW(TAG, "Too few valid PPG samples: %u", (unsigned)valid);
         return;
     }
 
-    uint32_t n = ppg->valid_sample_count;
+    // DC = 非运动样本原始均值
+    ppg->red_dc = (float)(red_raw_sum / valid);
+    ppg->ir_dc  = (float)(ir_raw_sum  / valid);
 
-    // DC = 原始值均值 (使用 float 避免精度丢失)
-    ppg->red_dc = (float)ppg->red_raw_sum / (float)n;
-    ppg->ir_dc  = (float)ppg->ir_raw_sum / (float)n;
+    // AC = 逐拍峰峰值均值（以 IR 谷底位置同步读取 RED 谷底值）
+    uint8_t n_peaks = ppg->peak_pos_count;
+    if (n_peaks < 2) {
+        ESP_LOGW(TAG, "Too few peaks for per-beat AC: %u", (unsigned)n_peaks);
+        return;
+    }
 
-    // AC = RMS(滤波信号) × 2√2 (使用 float 保留完整精度)
-    float red_rms = sqrtf((float)(ppg->red_filt_sq_sum / n));
-    float ir_rms  = sqrtf((float)(ppg->ir_filt_sq_sum / n));
+    float ir_pp_sum = 0.0f, red_pp_sum = 0.0f;
+    uint8_t beat_count = 0;
 
-    ppg->red_ac = red_rms * 2.828f;
-    ppg->ir_ac  = ir_rms * 2.828f;
+    for (uint8_t k = 0; k + 1 < n_peaks; k++) {
+        uint16_t p1 = ppg->peak_raw_positions[k];
+        uint16_t p2 = ppg->peak_raw_positions[k + 1];
 
+        if (p1 >= n || p2 >= n || p1 >= p2) {
+            continue;
+        }
+
+        // 在相邻两峰之间找 IR 谷底（最小值），RED 同步取该位置
+        uint16_t trough_idx = p1;
+        float ir_trough = ppg->ir_filt_buf[p1];
+        for (uint16_t j = p1 + 1; j < p2; j++) {
+            if (!ppg->motion_flags[j] && ppg->ir_filt_buf[j] < ir_trough) {
+                ir_trough = ppg->ir_filt_buf[j];
+                trough_idx = j;
+            }
+        }
+
+        float ir_pp  = ppg->ir_filt_buf[p1]  - ir_trough;
+        float red_pp = ppg->red_filt_buf[p1] - ppg->red_filt_buf[trough_idx];
+
+        if (ir_pp > 0.0f && red_pp > 0.0f) {
+            ir_pp_sum  += ir_pp;
+            red_pp_sum += red_pp;
+            beat_count++;
+        }
+    }
+
+    if (beat_count == 0) {
+        ESP_LOGW(TAG, "No valid beats for per-beat AC");
+        return;
+    }
+
+    ppg->ir_ac  = ir_pp_sum  / beat_count;
+    ppg->red_ac = red_pp_sum / beat_count;
+
+    ESP_LOGI(TAG, "Per-beat AC(%u beats): ir=%.1f red=%.1f, DC: ir=%.0f red=%.0f",
+             (unsigned)beat_count, ppg->ir_ac, ppg->red_ac, ppg->ir_dc, ppg->red_dc);
 }
 
 // ============== 心率计算 ==============
@@ -711,38 +764,36 @@ static uint8_t calculate_spo2(void)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
 
-    // 避免除零
     if (ppg->red_dc < 1.0f || ppg->ir_dc < 1.0f) {
+        ESP_LOGW(TAG, "SpO2: DC too low (red=%.1f ir=%.1f)", ppg->red_dc, ppg->ir_dc);
         return 0;
     }
 
-    // 信号幅度校验：AC 过小说明信号被噪声主导，结果不可信
     if (ppg->ir_ac < (float)PPG_MIN_AMPLITUDE || ppg->red_ac < (float)PPG_MIN_AMPLITUDE) {
-        ESP_LOGW(TAG, "SpO2: signal too weak (red_ac=%.1f, ir_ac=%.1f, min=%d)",
+        ESP_LOGW(TAG, "SpO2: signal too weak (red_ac=%.1f ir_ac=%.1f min=%d)",
                  ppg->red_ac, ppg->ir_ac, PPG_MIN_AMPLITUDE);
         return 0;
     }
 
-    // R = (AC_red/DC_red) / (AC_ir/DC_ir)
     float r_red = ppg->red_ac / ppg->red_dc;
     float r_ir  = ppg->ir_ac / ppg->ir_dc;
 
     if (r_ir < 0.0001f) {
+        ESP_LOGW(TAG, "SpO2: r_ir too small (%.6f)", r_ir);
         return 0;
     }
 
     float R = r_red / r_ir;
-
-    // Maxim MAX30102 官方二次多项式校准公式 (比线性公式更精确)
-    // 原公式 SpO2 = 110 - 25*R 在 R=0.5~0.8 范围系统性偏低 3~5%
     float spo2 = -45.060f * R * R + 30.354f * R + 94.845f;
 
-    // 范围限制
+    ESP_LOGI(TAG, "SpO2 calc: R=%.4f raw_spo2=%.1f%%", R, spo2);
+
     if (spo2 < 70.0f || spo2 > 100.0f) {
+        ESP_LOGW(TAG, "SpO2 out of range (R=%.4f -> %.1f%%)", R, spo2);
         return 0;
     }
 
-    return (uint8_t)(spo2 + 0.5f);  // 四舍五入
+    return (uint8_t)(spo2 + 0.5f);
 }
 
 // ============== 告警检查 ==============
