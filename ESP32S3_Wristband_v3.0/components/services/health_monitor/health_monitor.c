@@ -90,6 +90,11 @@ typedef struct {
 
     // 运动抑制统计
     uint32_t motion_reject_count;
+
+    // 逐拍峰峰值统计 (SpO2 AC 计算用)
+    uint16_t local_max_raw_idx;                          // local_max_value 对应 raw buffer 索引
+    uint16_t peak_raw_positions[PEAK_INTERVALS_MAX + 1]; // 已确认峰值的 raw 索引
+    uint8_t  peak_pos_count;                             // 已记录的峰值数量
 } ppg_context_t;
 
 /**
@@ -142,7 +147,7 @@ static void on_sensor_data(const event_t *event, void *user_data);
 static void on_imu_data(const event_t *event, void *user_data);
 static void store_ppg_sample(uint32_t red, uint32_t ir, bool motion_active);
 static void filtfilt_bandpass(const float *in, float *out, uint16_t n);
-static void detect_peak(float filtered_value);
+static void detect_peak(float filtered_value, uint16_t raw_idx);
 static void process_temp_data(float temp, uint32_t timestamp);
 static void check_alerts(uint32_t timestamp);
 static void calculate_ac_dc(void);
@@ -303,7 +308,7 @@ static void on_sensor_data(const event_t *event, void *user_data)
                 // 批量峰值检测（跳过运动样本）
                 for (uint16_t i = 0; i < s_ctx.ppg.raw_count; i++) {
                     if (!s_ctx.ppg.motion_flags[i]) {
-                        detect_peak(s_ctx.ppg.ir_filt_buf[i]);
+                        detect_peak(s_ctx.ppg.ir_filt_buf[i], i);
                     }
                 }
 
@@ -430,7 +435,7 @@ static void process_temp_data(float temp, uint32_t timestamp)
  * 在峰值确认时，利用峰值样本及其前后邻居进行抛物线插值，
  * 估计峰值的子样本精度位置，将心率分辨率从 ±N bpm 降至 ±1 bpm。
  */
-static void detect_peak(float filtered_value)
+static void detect_peak(float filtered_value, uint16_t raw_idx)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
     ppg->sample_count++;
@@ -481,6 +486,7 @@ static void detect_peak(float filtered_value)
             ppg->peak_next_pending = true;
             ppg->local_max_value = filtered_value;
             ppg->local_max_sample = ppg->sample_count;
+            ppg->local_max_raw_idx = raw_idx;
         }
         // 从局部最大值回落超过阈值 → 确认峰值（三点抛物线插值）
         if (ppg->local_max_value - filtered_value >= threshold) {
@@ -509,6 +515,9 @@ static void detect_peak(float filtered_value)
             }
 
             ppg->last_peak_sample = peak_pos;
+            if (ppg->peak_pos_count < PEAK_INTERVALS_MAX + 1) {
+                ppg->peak_raw_positions[ppg->peak_pos_count++] = ppg->local_max_raw_idx;
+            }
             ppg->rising = false;
             ppg->local_min_value = filtered_value;
         }
@@ -526,6 +535,7 @@ static void detect_peak(float filtered_value)
             ppg->peak_next_pending = true;
             ppg->local_max_value = filtered_value;
             ppg->local_max_sample = ppg->sample_count;
+            ppg->local_max_raw_idx = raw_idx;
         }
     }
 
@@ -598,21 +608,18 @@ static void filtfilt_bandpass(const float *in, float *out, uint16_t n)
  * @brief 计算 PPG 的 AC/DC 分量（从 filtfilt 输出缓冲区遍历计算）
  *
  * DC = 非运动样本原始值均值
- * AC = RMS(零相位滤波信号) × 2√2
+ * AC = 逐拍峰峰值均值（IR 谷底位置同步读取 RED，与 Maxim 校准方法一致）
  */
 static void calculate_ac_dc(void)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
     uint16_t n = ppg->raw_count;
 
-    double red_filt_sq = 0.0, ir_filt_sq = 0.0;
     double red_raw_sum = 0.0, ir_raw_sum = 0.0;
     uint32_t valid = 0;
 
     for (uint16_t i = 0; i < n; i++) {
         if (!ppg->motion_flags[i]) {
-            red_filt_sq += (double)ppg->red_filt_buf[i] * ppg->red_filt_buf[i];
-            ir_filt_sq  += (double)ppg->ir_filt_buf[i]  * ppg->ir_filt_buf[i];
             red_raw_sum += ppg->red_raw_buf[i];
             ir_raw_sum  += ppg->ir_raw_buf[i];
             valid++;
@@ -624,13 +631,58 @@ static void calculate_ac_dc(void)
         return;
     }
 
-    // DC = 原始值均值 (使用 float 避免精度丢失)
+    // DC = 非运动样本原始均值
     ppg->red_dc = (float)(red_raw_sum / valid);
     ppg->ir_dc  = (float)(ir_raw_sum  / valid);
 
-    // AC = RMS(滤波信号) × 2√2 (使用 float 保留完整精度)
-    ppg->red_ac = sqrtf((float)(red_filt_sq / valid)) * 2.828f;
-    ppg->ir_ac  = sqrtf((float)(ir_filt_sq  / valid)) * 2.828f;
+    // AC = 逐拍峰峰值均值（以 IR 谷底位置同步读取 RED 谷底值）
+    uint8_t n_peaks = ppg->peak_pos_count;
+    if (n_peaks < 2) {
+        ESP_LOGW(TAG, "Too few peaks for per-beat AC: %u", (unsigned)n_peaks);
+        return;
+    }
+
+    float ir_pp_sum = 0.0f, red_pp_sum = 0.0f;
+    uint8_t beat_count = 0;
+
+    for (uint8_t k = 0; k + 1 < n_peaks; k++) {
+        uint16_t p1 = ppg->peak_raw_positions[k];
+        uint16_t p2 = ppg->peak_raw_positions[k + 1];
+
+        if (p1 >= n || p2 >= n || p1 >= p2) {
+            continue;
+        }
+
+        // 在相邻两峰之间找 IR 谷底（最小值），RED 同步取该位置
+        uint16_t trough_idx = p1;
+        float ir_trough = ppg->ir_filt_buf[p1];
+        for (uint16_t j = p1 + 1; j < p2; j++) {
+            if (!ppg->motion_flags[j] && ppg->ir_filt_buf[j] < ir_trough) {
+                ir_trough = ppg->ir_filt_buf[j];
+                trough_idx = j;
+            }
+        }
+
+        float ir_pp  = ppg->ir_filt_buf[p1]  - ir_trough;
+        float red_pp = ppg->red_filt_buf[p1] - ppg->red_filt_buf[trough_idx];
+
+        if (ir_pp > 0.0f && red_pp > 0.0f) {
+            ir_pp_sum  += ir_pp;
+            red_pp_sum += red_pp;
+            beat_count++;
+        }
+    }
+
+    if (beat_count == 0) {
+        ESP_LOGW(TAG, "No valid beats for per-beat AC");
+        return;
+    }
+
+    ppg->ir_ac  = ir_pp_sum  / beat_count;
+    ppg->red_ac = red_pp_sum / beat_count;
+
+    ESP_LOGI(TAG, "Per-beat AC(%u beats): ir=%.1f red=%.1f, DC: ir=%.0f red=%.0f",
+             (unsigned)beat_count, ppg->ir_ac, ppg->red_ac, ppg->ir_dc, ppg->red_dc);
 }
 
 // ============== 心率计算 ==============
@@ -712,38 +764,36 @@ static uint8_t calculate_spo2(void)
 {
     ppg_context_t *ppg = &s_ctx.ppg;
 
-    // 避免除零
     if (ppg->red_dc < 1.0f || ppg->ir_dc < 1.0f) {
+        ESP_LOGW(TAG, "SpO2: DC too low (red=%.1f ir=%.1f)", ppg->red_dc, ppg->ir_dc);
         return 0;
     }
 
-    // 信号幅度校验：AC 过小说明信号被噪声主导，结果不可信
     if (ppg->ir_ac < (float)PPG_MIN_AMPLITUDE || ppg->red_ac < (float)PPG_MIN_AMPLITUDE) {
-        ESP_LOGW(TAG, "SpO2: signal too weak (red_ac=%.1f, ir_ac=%.1f, min=%d)",
+        ESP_LOGW(TAG, "SpO2: signal too weak (red_ac=%.1f ir_ac=%.1f min=%d)",
                  ppg->red_ac, ppg->ir_ac, PPG_MIN_AMPLITUDE);
         return 0;
     }
 
-    // R = (AC_red/DC_red) / (AC_ir/DC_ir)
     float r_red = ppg->red_ac / ppg->red_dc;
     float r_ir  = ppg->ir_ac / ppg->ir_dc;
 
     if (r_ir < 0.0001f) {
+        ESP_LOGW(TAG, "SpO2: r_ir too small (%.6f)", r_ir);
         return 0;
     }
 
     float R = r_red / r_ir;
-
-    // Maxim MAX30102 官方二次多项式校准公式 (比线性公式更精确)
-    // 原公式 SpO2 = 110 - 25*R 在 R=0.5~0.8 范围系统性偏低 3~5%
     float spo2 = -45.060f * R * R + 30.354f * R + 94.845f;
 
-    // 范围限制
+    ESP_LOGI(TAG, "SpO2 calc: R=%.4f raw_spo2=%.1f%%", R, spo2);
+
     if (spo2 < 70.0f || spo2 > 100.0f) {
+        ESP_LOGW(TAG, "SpO2 out of range (R=%.4f -> %.1f%%)", R, spo2);
         return 0;
     }
 
-    return (uint8_t)(spo2 + 0.5f);  // 四舍五入
+    return (uint8_t)(spo2 + 0.5f);
 }
 
 // ============== 告警检查 ==============

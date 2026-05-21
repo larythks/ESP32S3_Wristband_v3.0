@@ -21,5 +21,5 @@ idf_component_register(
         "button/include"
         "ws2812/include"
         "audio/include"
-    REQUIRES driver spiffs
+    REQUIRES driver spiffs nvs_flash
 )
