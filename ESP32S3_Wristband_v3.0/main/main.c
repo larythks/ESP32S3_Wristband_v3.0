@@ -226,6 +226,12 @@ void app_main(void)
         button_register_cb(BUTTON_ID_SW2, BUTTON_EVENT_LONG_PRESS, sw2_callback);
     }
 
+    // 初始化事件总线（必须先于所有订阅者，否则 event_subscribe 会失败）
+    ret = event_bus_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Event bus init failed!");
+    }
+
     // 初始化 UI 管理器
     ret = ui_manager_init();
     if (ret != ESP_OK) {
@@ -235,12 +241,6 @@ void app_main(void)
     // 将开机时读到的 RTC 时间注入 UI 缓存，避免等待 I2C 总线空闲
     if (rtc_valid) {
         ui_manager_set_rtc_cache(&rtc_time);
-    }
-
-    // 初始化事件总线
-    ret = event_bus_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Event bus init failed!");
     }
 
     // 初始化 WS2812 RGB LED

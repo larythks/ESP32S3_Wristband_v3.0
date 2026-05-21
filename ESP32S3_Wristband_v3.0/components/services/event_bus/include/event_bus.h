@@ -42,6 +42,7 @@ typedef enum {
     EVT_BLE_CONN,           // BLE 连接状态
     EVT_SAMPLING_MODE,      // 采样模式变更
     EVT_HR_RESULT_READY,    // HR/SpO2 测量完成且数据全部有效，触发 BLE 上报
+    EVT_IMU_DATA,           // IMU 高频数据 (100Hz)
     EVT_TYPE_MAX            // 事件类型数量
 } event_type_t;
 
@@ -83,6 +84,19 @@ typedef struct {
     uint8_t data_valid;     // 数据有效标志位
     uint32_t timestamp;     // 时间戳 (ms)
 } sensor_data_t;
+
+/**
+ * @brief IMU 数据结构 (高频 100Hz)
+ */
+typedef struct {
+    int16_t accel_x;        // 加速度 X
+    int16_t accel_y;        // 加速度 Y
+    int16_t accel_z;        // 加速度 Z
+    int16_t gyro_x;         // 陀螺仪 X
+    int16_t gyro_y;         // 陀螺仪 Y
+    int16_t gyro_z;         // 陀螺仪 Z
+    uint32_t timestamp;     // 时间戳 (ms)
+} imu_data_t;
 
 /**
  * @brief 采样模式变更事件数据
@@ -141,6 +155,7 @@ typedef struct {
  */
 typedef union {
     sensor_data_t sensor;           // 传感器数据
+    imu_data_t imu;                 // IMU 高频数据
     sampling_mode_event_t sampling; // 采样模式变更
     health_alert_t health_alert;    // 健康告警
     voice_cmd_data_t voice_cmd;     // 语音命令数据

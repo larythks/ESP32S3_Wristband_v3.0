@@ -1430,3 +1430,181 @@ SH1106 OLED、DS3231 RTC、MAX30102 心率传感器、MPU6050 运动传感器全
 - `components/drivers/max30102/max30102.c`
 - `components/drivers/mpu6050/mpu6050.c`
 - `main/main.c`
+
+---
+
+## ISSUE-051：开机后 OLED HOME 页温度显示延迟 5~40 秒
+
+**发现日期**：2026-04-19
+
+**原因**：
+此问题由三个相互叠加的缺陷共同造成，排查过程中逐层暴露：
+
+**1. `main.c` 初始化顺序错误导致事件订阅直接失败（根因层）**
+`main.c:230` 调用 `ui_manager_init()` 早于 `main.c:241` 的 `event_bus_init()`。`ui_manager_init()` 内部会调用 `event_subscribe(EVT_SENSOR_DATA, on_sensor_data_cb, NULL)` 订阅传感器数据事件，但此时事件总线尚未初始化，`event_subscribe()` 直接返回 `ESP_ERR_INVALID_STATE`（见 `event_bus.c:154-156` 的 `if (!s_ctx.initialized)` 早退分支）。UI 的事件回调**从未被成功注册**，事件驱动路径完全失效，所有温度刷新只能退化到原有轮询兜底。
+
+**2. UI 温度刷新机制仅依赖周期性轮询，与传感器采样时刻不同步（机制层）**
+`ui_manager.c` 中 HOME 页温度刷新基于 `temp_refresh_counter`（500ms × 60 = 30s）轮询：
+- 初值 56，启动 2 秒后首次触发 `draw_home_page()`
+- 若当时 `temp_validity != MEASURE_VALID`，计数器重置为 54（3s 后重试）
+- 之后每 30s 轮询一次
+
+DS18B20 首次转换需 `sensor_service_start + 1.75s`（1s 启动延迟 + 750ms 转换），加上 `health_monitor` 处理延迟、I2C 偶发失败，UI 的轮询时刻与传感器就绪时刻对不齐，最坏情况接近一个完整 `SENSOR_TEMP_NORMAL_INTERVAL`（30 秒）。
+
+**3. 事件驱动刷新若仅触发首次就绪，后续温度变化仍可能刷旧值（算法层）**
+即便改为事件驱动后仅用一次性门闩（首次 VALID 即不再响应），后续温度变化会继续依赖 30s 轮询，而轮询时刻不一定对齐 DS18B20 的下一次新采样完成时刻，可能读到上一轮旧值，导致环境温度变化时显示值长时间不更新。
+
+**后果**：
+- 系统开机后 OLED 主页温度区域显示 `--.-C` 长达 5~40 秒，延迟随机性大
+- 真实 DS18B20 在启动约 1.75 秒后已采集到有效温度，但 UI 未及时刷新
+- 环境温度变化时显示值长时间不更新（如进入/离开空调房后滞后一个完整采样周期)
+- 串口出现 `Subscribe EVT_SENSOR_DATA failed, fallback to polling` 警告但未被留意
+- 切换到 HOME 页能立即显示温度（因 `ui_switch_page_locked()` 直接 `ui_update_locked()` → `draw_home_page()` 强制重绘，绕过计数器节流），进一步掩盖了根因
+
+**解决方案**：
+三层联合修复，从根因到机制逐步打通事件驱动刷新链路。
+
+**1. 调整初始化顺序（`main.c`）**
+将 `event_bus_init()` 前置到 `ui_manager_init()` 之前，确保事件总线先于所有订阅者就绪，并在注释中标注依赖关系：
+
+```c
+// 初始化事件总线（必须先于所有订阅者，否则 event_subscribe 会失败）
+ret = event_bus_init();
+if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Event bus init failed!");
+}
+
+// 初始化 UI 管理器
+ret = ui_manager_init();
+```
+
+**2. 订阅 EVT_SENSOR_DATA 实现事件驱动刷新（`ui_manager.c`）**
+在 `ui_manager_init()` 末尾（`xTaskCreate` 成功后）订阅事件，回调内通过 `xTaskNotify` 唤醒 `ui_task` 走 `UI_NOTIFY_REFRESH` 分支全量刷新：
+
+```c
+static bool  s_temp_notified_once = false;
+static float s_last_notified_temp = 0.0f;
+
+static void on_sensor_data_cb(const event_t *event, void *user_data)
+{
+    (void)event; (void)user_data;
+    health_status_t status = health_get_status();
+    if (status.temp_validity != MEASURE_VALID) return;
+
+    float current = status.temperature;
+    float diff = current - s_last_notified_temp;
+    // 首次必触发；之后温度变化 < 0.05°C（显示值不变）跳过
+    if (s_temp_notified_once && diff > -0.05f && diff < 0.05f) {
+        return;
+    }
+    s_temp_notified_once = true;
+    s_last_notified_temp = current;
+    if (s_ui_task_handle != NULL) {
+        xTaskNotify(s_ui_task_handle, UI_NOTIFY_REFRESH, eSetBits);
+    }
+}
+
+// ui_manager_init() 末尾 xTaskCreate 成功后
+event_subscribe(EVT_SENSOR_DATA, on_sensor_data_cb, NULL);
+```
+
+**3. 使用显示级变化阈值抑制无意义刷新**
+OLED 显示格式 `"%.1fC"`（1 位小数），温度变化 < 0.05°C 时显示内容不变，跳过通知。平稳温度下 DS18B20 量化步进 0.0625°C > 0.05°C，约每 30s 触发一次刷新，但**严格对齐 DS18B20 的每次真实采样完成时刻**，避免读到旧值。
+
+**关键设计考量**：
+1. **不在回调内 `event_unsubscribe`**：`event_bus.c` 分发时已持有非递归互斥锁，回调内 unsubscribe 会死锁并阻塞 100ms 超时。改用静态布尔 `s_temp_notified_once` 短路 + 温度数值比较决定是否 notify。
+2. **订阅时机**：放在 `xTaskCreate` 成功之后，确保 `s_ui_task_handle` 非 NULL；回调内仍加 NULL 保护。
+3. **保留原有轮询兜底**：不删除 30s/3s 计数器，万一事件链中断仍能恢复。
+4. **不引入 `<math.h>`**：用 `diff > -x && diff < x` 替代 `fabsf()`，避免新增依赖。
+5. **初始化顺序依赖显式标注**：在 `main.c` 注释中明确 `event_bus_init()` 必须先于所有订阅者，防止后续重构再次打乱顺序。
+
+**验证方法**：
+- 串口日志应**不再**出现 `Subscribe EVT_SENSOR_DATA failed` 警告
+- OLED 温度应在开机后约 1.8~2 秒内稳定显示实际温度值
+- 环境温度持续变化时（如用嘴呵气），OLED 显示值应在 <1 秒内跟随变化
+
+**涉及文件**：
+- `main/main.c`
+- `components/ui_manager/ui_manager.c`
+
+---
+
+## ISSUE-052：心率测量偏高 ~15%（实测 86-88 bpm → 输出 ~100 bpm）— PPG 重搏切迹假峰
+
+**发现日期**：2026-05-05
+
+**原因**：
+PPG 波形包含重搏切迹（dicrotic notch），在主收缩峰后约 200-400ms（25Hz 采样率下 5-10 采样点）出现小幅二次波动。原峰值检测算法存在两个缺陷使其将切迹误判为额外心跳：
+
+1. **无不应用**：主峰确认后立即允许追踪下一个上升沿。切迹的微小回升越过阈值 → 状态机切回上升模式 → 切迹回落又触发假峰确认。假峰插入 8-12 采样点短间隔（对应 HR 125-188 bpm）。
+2. **自适应阈值比例偏低**（`ADAPTIVE_THRESH_RATIO = 0.3`）：阈值仅为信号峰峰值的 30%，切迹波动容易穿越。
+
+假峰间隔（8-12）部分越过 `PEAK_MIN_INTERVAL=8` 门槛，且落在中值 ±40% 离群剔除范围内（10-23），无法被滤除，直接拉低平均间隔 → 心率虚高。
+
+以实测 87 bpm 为例：预期间隔 17.2 采样点；若混入 3-4 个 ~11 采样点的假峰间隔，平均间隔降至 ~15 采样点 → HR ≈ 100 bpm，与用户报告完全吻合。
+
+**后果**：
+- 心率测量值系统性偏高 10-18 bpm，影响健康监测数据可信度
+- 偏高幅度因个体 PPG 波形差异而异（切迹强度因人而异）
+
+**解决方案**：
+在 `health_monitor.c` 中三处修改：
+
+1. **新增不应期常量**：`PEAK_REFRACTORY_SAMPLES = 6`（240ms @25Hz），覆盖典型切迹延迟范围
+2. **提高自适应阈值比例**：`ADAPTIVE_THRESH_RATIO` 从 `0.3f` → `0.45f`，要求信号穿越更明确的峰/谷
+3. **谷值确认加入不应期判断**：下降阶段切换上升前，强制检查 `(sample_count - last_peak_sample) >= PEAK_REFRACTORY_SAMPLES`
+
+```c
+// 下降阶段：加入不应期检查
+if ((ppg->sample_count - ppg->last_peak_sample) >= PEAK_REFRACTORY_SAMPLES &&
+    filtered_value - ppg->local_min_value >= threshold) {
+    ppg->rising = true;
+    // ...
+}
+```
+
+**设计考量**：
+- 不应期 6 采样点 + 阈值比例 0.45 的组合，实际心率上限约 150 bpm，满足腕带使用场景
+- `PEAK_MIN_INTERVAL` 保持 8 不变，作为第二道防线
+- 仅修改 `health_monitor.c` 一个文件，影响范围最小
+
+**涉及文件**：
+- `components/services/health_monitor/health_monitor.c`
+
+---
+
+## ISSUE-053：心率计算精度受离散采样点数限制，高铁心率区间跳动量过大
+
+**发现日期**：2026-05-05
+
+**原因**：
+`calculate_heart_rate()` 使用**整数采样点数**作为峰值间隔单位（`uint32_t`），在 25Hz PPG 采样率下每个样本代表 40ms。心率通过 `HR = 60 × 25 / avg_interval_samples`（整数除法）计算，导致输出被量化为离散值：
+
+- 60 BPM 附近：±2~3 BPM 跳动
+- 100 BPM 附近：±6~7 BPM 跳动
+- 120 BPM 附近：**±8~10 BPM 跳动**
+- 150 BPM 附近：±15 BPM 跳动
+- 180 BPM 附近：±23 BPM 跳动
+
+心率越高，整数化误差越显著。根本原因是峰值检测在离散采样域中定位峰值位置，1 个样本的偏差在分母较小时被剧烈放大。
+
+**后果**：
+- 高铁心率区间（>100 BPM）输出跳动量远超临床可接受范围（应 ≤ ±3 BPM）
+- 用户运动后心率从 60 升至 120 BPM 时，数据跳动剧烈，无法提供平滑的监测体验
+- 心率和血氧告警判定依赖稳定的心率值，跳动过大会导致告警误触发或漏触发
+
+**解决方案**：
+在峰值确认时使用**三点抛物线插值**估计峰值的子样本精度位置：
+
+1. **扩展 `ppg_context_t`**：添加 `last_filtered_value`、`peak_prev_value`、`peak_next_value`、`peak_next_pending` 字段；将 `last_peak_sample` 和 `peak_intervals[]` 从 `uint32_t` 改为 `float`
+2. **修改 `detect_peak()`**：在检测到新的局部最大值时保存峰值前后邻居的滤波值；在峰值确认时使用抛物线公式 `offset = (y[i-1] - y[i+1]) / (2*(y[i-1] - 2*y[i] + y[i+1]))` 计算子样本偏移量，并裁剪到 [-0.5, 0.5]；以浮点峰值位置 `peak_pos = local_max_sample + offset` 计算间隔
+3. **修改 `calculate_heart_rate()`**：将间隔数组、排序、中值筛选、平均值全部改用 `float` 运算；心率计算使用 `60.0f * PPG_SAMPLE_RATE_HZ / avg_interval` 浮点除法并四舍五入
+
+**设计考量**：
+- 插值公式分母为 0 时（三点共线）回退为 `offset = 0`
+- 偏移量裁剪到 [-0.5, 0.5] 防止异常值
+- 浮点运算开销微小（每峰值 5~8 次乘加），ESP32-S3 可忽略不计
+- 仅修改 `health_monitor.c` 一个文件，影响范围最小
+
+**涉及文件**：
+- `components/services/health_monitor/health_monitor.c`

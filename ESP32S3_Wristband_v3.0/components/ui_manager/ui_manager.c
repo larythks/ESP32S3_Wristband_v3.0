@@ -11,6 +11,7 @@
 #include "health_monitor.h"
 #include "pedometer.h"
 #include "sensor_service.h"
+#include "event_bus.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -47,6 +48,8 @@ static ui_page_t s_page_before_measure = UI_PAGE_HOME;
 static int s_home_last_minute = -1;
 static ds3231_time_t s_home_cached_time = {0};
 static bool s_home_cached_time_valid = false;
+static bool s_temp_notified_once = false;     // 是否已发过至少一次温度刷新通知
+static float s_last_notified_temp = 0.0f;     // 上次通知刷新时的温度值（°C）
 
 static bool is_leap_year(uint16_t year)
 {
@@ -369,6 +372,46 @@ static void ui_exit_manual_measure_locked(void)
 }
 
 /**
+ * @brief EVT_SENSOR_DATA 订阅回调：温度值变化时唤醒 UI 全量刷新
+ *
+ * 运行在 event_bus 的分发任务上下文，回调期间事件总线已持有内部互斥锁，
+ * 因此不能在此处调用 event_unsubscribe（会死锁）。
+ *
+ * 触发条件：
+ * 1. health_monitor 的 temp_validity 为 MEASURE_VALID；
+ * 2. 首次触发（s_temp_notified_once==false），或温度相对上次通知值变化 >= 0.05°C
+ *    （OLED 显示精度为 0.1°C，小于 0.05 的变化在显示上不会体现，避免无意义刷屏）。
+ *
+ * 这样 OLED 显示值严格对齐到 DS18B20 的每次真实采样（约 30s 一次），
+ * 避免了周期性轮询恰好撞上传感器采样未完成而刷新旧值的问题。
+ */
+static void on_sensor_data_cb(const event_t *event, void *user_data)
+{
+    (void)event;
+    (void)user_data;
+
+    health_status_t status = health_get_status();
+    if (status.temp_validity != MEASURE_VALID) {
+        return;
+    }
+
+    float current = status.temperature;
+    float diff = current - s_last_notified_temp;
+    /* 首次必触发；之后温度变化 < 0.05°C（显示值不变）时跳过 */
+    if (s_temp_notified_once && diff > -0.05f && diff < 0.05f) {
+        return;
+    }
+
+    s_temp_notified_once = true;
+    s_last_notified_temp = current;
+
+    if (s_ui_task_handle != NULL) {
+        xTaskNotify(s_ui_task_handle, UI_NOTIFY_REFRESH, eSetBits);
+        ESP_LOGI(TAG, "Temp updated to %.2fC, notify UI full refresh", current);
+    }
+}
+
+/**
  * @brief UI 刷新任务（独立任务，替代 Timer Service 回调）
  *
  * 以 500ms 为基础周期运行，承担以下职责：
@@ -550,6 +593,12 @@ esp_err_t ui_manager_init(void)
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create UI task");
         return ESP_ERR_NO_MEM;
+    }
+
+    // 订阅传感器数据事件：温度首次 VALID 时立即唤醒 UI 全量刷新
+    esp_err_t sub_ret = event_subscribe(EVT_SENSOR_DATA, on_sensor_data_cb, NULL);
+    if (sub_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Subscribe EVT_SENSOR_DATA failed (%d), fallback to polling", sub_ret);
     }
 
     ESP_LOGI(TAG, "UI manager initialized (full refresh %d ms, fast refresh %d ms)",

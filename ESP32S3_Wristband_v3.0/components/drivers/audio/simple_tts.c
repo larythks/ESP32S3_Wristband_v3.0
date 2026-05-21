@@ -150,8 +150,9 @@ esp_err_t tts_speak_temperature(float temp)
     esp_err_t ret;
 
     /* Split into integer and one decimal place */
-    int int_part = (int)fabsf(temp);
-    int dec_part = ((int)(fabsf(temp) * 10.0f)) % 10;
+    int temp_x10 = (int)lroundf(fabsf(temp) * 10.0f);
+    int int_part = temp_x10 / 10;
+    int dec_part = temp_x10 % 10;
 
     /* Clamp integer part to 999 */
     if (int_part > 999) {

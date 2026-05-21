@@ -33,6 +33,7 @@
 
 #include <string.h>
 #include <limits.h>
+#include <math.h>
 
 /* NimBLE store config init (未在公开头文件声明) */
 extern void ble_store_config_init(void);
@@ -574,11 +575,16 @@ static esp_err_t send_telemetry_now(void)
     ble_telemetry_t pkt;
     memset(&pkt, 0, sizeof(pkt));
 
-    pkt.temp       = (int16_t)(sensor.temperature * 10);
+    pkt.temp       = (int16_t)lroundf(health.temperature * 10.0f);
     pkt.heart_rate = health.heart_rate;
     pkt.spo2       = health.spo2;
     pkt.steps      = pedometer_get_steps();
     pkt.data_valid = sensor.data_valid;
+    if (health.temp_validity == MEASURE_VALID) {
+        pkt.data_valid |= SENSOR_TEMP;
+    } else {
+        pkt.data_valid &= (uint8_t)~SENSOR_TEMP;
+    }
     pkt.timestamp  = ble_get_unix_timestamp();
 
     /* 发送 Notify */

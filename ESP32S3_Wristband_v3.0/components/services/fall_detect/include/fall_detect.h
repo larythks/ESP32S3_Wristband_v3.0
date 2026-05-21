@@ -19,7 +19,7 @@ extern "C" {
 // ============================================================================
 
 // 加速度阈值 (单位: g, 1g = 9.8m/s²)
-#define FALL_IMPACT_THRESHOLD       2.0f    // 冲击阈值 (SVM > 2.0g 判定为冲击)
+#define FALL_IMPACT_THRESHOLD       3.0f    // 冲击阈值 (SVM > 3.0g 判定为冲击)
 #define FALL_FREEFALL_THRESHOLD     0.6f    // 自由落体阈值 (SVM < 0.6g)
 #define FALL_STATIC_LOW             0.8f    // 静止状态下限
 #define FALL_STATIC_HIGH            1.2f    // 静止状态上限
@@ -35,8 +35,7 @@ extern "C" {
 #define FALL_COOLDOWN_DURATION      30000   // 跌倒检测后冷却时间 (30秒)
 
 // 采样配置
-#define FALL_SAMPLE_RATE_HZ         50      // 采样率 (与 IMU 采样率一致)
-#define FALL_HISTORY_SIZE           100     // 历史数据缓冲区大小 (2秒数据)
+#define FALL_HISTORY_SIZE           200     // 历史数据缓冲区大小 (2秒数据)
 
 // ============================================================================
 // 数据类型定义
