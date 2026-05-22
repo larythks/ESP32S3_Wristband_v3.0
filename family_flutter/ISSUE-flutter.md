@@ -131,3 +131,23 @@
 - **后果**: 即使通知开关和振动开关的偏好读取逻辑正确，振动仍然始终不生效（缺权限）；且单渠道方案无法真正切换振动开/关
 - **解决方案**: 1) `AndroidManifest.xml` 添加 `<uses-permission android:name="android.permission.VIBRATE"/>`；2) `NotificationService.init()` 创建两个渠道——`careband_alarm`（带振动）和 `careband_alarm_quiet`（无振动），`showAlarmNotification()` 根据 `enableVibration` 参数选择对应渠道
 - **涉及文件**: `android/app/src/main/AndroidManifest.xml`, `lib/services/notification_service.dart`
+
+---
+
+## ISSUE-FAMILY-013
+
+- **发现日期**: 2026-05-22
+- **原因**: `FamilyRepository.cleanup()` 清理遥测数据时使用 `received_at < cutoff` 作为删除条件。家属端可能最近才收到设备补发的历史遥测数据，此时 `received_at` 是当前接收时间，即使遥测自身 `timestamp` 已超过 7 天也不会被删除。
+- **后果**: 用户点击“清理旧数据”后，报警记录可按规则清理，但数据记录中的历史遥测仍然保留，表现为数据记录清理无效。
+- **解决方案**: 将遥测清理条件改为按设备数据时间 `timestamp < cutoff` 删除，确保 7 天前的遥测记录会被清理；报警记录仍保留 `received_at < cutoff AND acknowledged = 1`，避免误删未确认报警。
+- **涉及文件**: `lib/data/family_repository.dart`
+
+---
+
+## ISSUE-FAMILY-014
+
+- **发现日期**: 2026-05-22
+- **原因**: `DeviceProvider.refreshHistory()` 在清理后重新加载历史数据时，仅在 `_telemetryHistory` 或 `_alarmHistory` 非空时更新 `_latestTelemetry` / `_latestAlarm`。当清理旧数据导致历史列表为空时，latest 字段仍保留清理前的对象。
+- **后果**: 趋势页和报警页已清空，但主界面健康卡片仍显示上一次遥测数据，用户误以为数据记录没有被删除。
+- **解决方案**: `refreshHistory()` 中将 latest 字段改为由历史列表完整赋值：列表非空时取最新记录，列表为空时置为 `null`，使主界面同步显示空数据状态。
+- **涉及文件**: `lib/providers/device_provider.dart`

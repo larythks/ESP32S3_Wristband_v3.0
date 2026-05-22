@@ -201,7 +201,7 @@ static void process_state_idle(const accel_sample_t *sample)
         s_ctx.peak_svm = sample->svm;
         s_ctx.impact_time = sample->timestamp;
         // 从历史数据获取跌倒前姿态
-        const accel_sample_t *pre = get_history_sample(-10);
+        const accel_sample_t *pre = get_history_sample(-100);
         if (pre) {
             normalize_orientation(pre->ax, pre->ay, pre->az,
                                   s_ctx.pre_fall_orientation);

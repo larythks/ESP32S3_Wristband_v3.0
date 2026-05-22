@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/ble_provider.dart';
-import '../../data/sqlite_repository.dart';
 
 /// 设置页面
 class SettingsTab extends StatelessWidget {
@@ -257,8 +256,6 @@ class SettingsTab extends StatelessWidget {
   }
 
   void _showClearAllDataDialog(BuildContext context, BleProvider ble) {
-    final repository = SqliteDataRepository();
-
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -283,7 +280,7 @@ class SettingsTab extends StatelessWidget {
             ),
             onPressed: () async {
               Navigator.of(ctx).pop();
-              final result = await repository.clearAllData();
+              final result = await ble.clearAllLocalData();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(

@@ -597,3 +597,20 @@
   - `SettingsTab` 新增“远程操作”卡片，提供同步时间和请求上报入口，未连接时禁用
   - `DashboardTab` 在健康数据网格下方新增手动测量按钮，支持 15 秒倒计时动画和加载指示器
 - **关键文件**: lib/mqtt/mqtt_subscriber.dart, lib/providers/device_provider.dart, lib/ui/tabs/settings_tab.dart, lib/ui/tabs/dashboard_tab.dart
+
+---
+
+### 2026-05-22 - Bug 修复: Flutter 删除旧数据后界面仍显示旧记录
+
+- **迭代**: Bug 修复（影响迭代 4.2、Phase 2 - 迭代 F-2/F-7）
+- **状态**: ✅ 已完成
+- **任务简述**: 修复 mobile_flutter 清除所有数据后数据/报警记录仍显示，以及 family_flutter 清理旧数据后遥测记录未删除的问题。
+- **主要改动**:
+  - mobile_flutter：清除所有数据改为通过 `BleProvider.clearAllLocalData()` 同步清空 SQLite、遥测缓存、报警缓存和最新数据，并通知 UI 刷新。
+  - family_flutter：遥测旧数据清理条件从本地接收时间 `received_at` 改为设备数据时间 `timestamp`，确保 7 天前遥测会被清理。
+  - 按项目规则补充两个 App 的 ISSUE 记录。
+- **关键文件**: mobile_flutter/lib/data/ble_provider.dart, mobile_flutter/lib/ui/tabs/settings_tab.dart, family_flutter/lib/data/family_repository.dart, mobile_flutter/ISSUE-flutter.md, family_flutter/ISSUE-flutter.md
+- **验收状态**: 待验收
+- **遗留问题或备注**: 需要在真实 App 中点击清理/清除入口后确认页面记录立即消失或按 7 天规则更新。
+
+---

@@ -124,6 +124,23 @@ class BleProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  Future<Map<String, int>> clearAllLocalData() async {
+    Map<String, int> result = {'telemetry': 0, 'alarm': 0};
+    try {
+      result = _repoReady
+          ? await _repo.clearAllData()
+          : await SqliteDataRepository().clearAllData();
+    } catch (e) {
+      debugPrint('[BleProvider] clearAllLocalData failed: $e');
+    }
+    _telemetryHistory = [];
+    _alarmHistory = [];
+    _latestTelemetry = null;
+    _latestAlarm = null;
+    notifyListeners();
+    return result;
+  }
+
   Future<void> _initRepository() async {
     try {
       _repo = SqliteDataRepository();

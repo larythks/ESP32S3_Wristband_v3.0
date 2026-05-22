@@ -234,12 +234,12 @@ class DeviceProvider extends ChangeNotifier with WidgetsBindingObserver {
       _unackedAlarmCount = await _repo.getUnackedAlarmCount(_deviceId!);
 
       // 更新最新数据
-      if (_telemetryHistory.isNotEmpty) {
-        _latestTelemetry = _telemetryHistory.last;
-      }
-      if (_alarmHistory.isNotEmpty) {
-        _latestAlarm = _alarmHistory.first; // alarmHistory 按时间倒序
-      }
+      _latestTelemetry = _telemetryHistory.isNotEmpty
+          ? _telemetryHistory.last
+          : null;
+      _latestAlarm = _alarmHistory.isNotEmpty
+          ? _alarmHistory.first
+          : null;
 
       debugPrint(
         '[DeviceProvider] 历史数据已刷新: '

@@ -362,10 +362,10 @@ class FamilyRepository {
           .subtract(const Duration(days: 7))
           .millisecondsSinceEpoch;
 
-      // 清理遥测数据（received_at 超过 7 天）
+      // 清理设备时间超过 7 天的遥测数据
       final telDeleted = await db.delete(
         'telemetry',
-        where: 'received_at < ?',
+        where: 'timestamp < ?',
         whereArgs: [cutoffMs],
       );
 

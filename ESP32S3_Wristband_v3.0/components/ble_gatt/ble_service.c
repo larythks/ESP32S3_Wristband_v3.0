@@ -30,6 +30,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #include <string.h>
 #include <limits.h>
@@ -59,6 +60,9 @@ static int64_t s_time_offset = 0;
 /* Telemetry 动态间隔: 正常模式为事件驱动(portMAX_DELAY) */
 static volatile uint32_t s_telemetry_interval_ms = portMAX_DELAY;
 static TaskHandle_t s_telemetry_task_handle = NULL;
+static SemaphoreHandle_t s_temp_snapshot_mutex = NULL;
+static sensor_data_t s_temp_snapshot;
+static bool s_temp_snapshot_pending = false;
 
 /* ============== 前向声明 ============== */
 
@@ -69,6 +73,8 @@ static void ble_host_task(void *param);
 static int ble_start_advertise(void);
 static void telemetry_task(void *param);
 static esp_err_t send_telemetry_now(void);
+static esp_err_t send_telemetry_from_sensor(const sensor_data_t *sensor);
+static bool take_temp_snapshot(sensor_data_t *sensor);
 static void on_sampling_mode_change(const event_t *event, void *user_data);
 static void on_hr_result_ready(const event_t *event, void *user_data);
 
@@ -555,18 +561,14 @@ uint32_t ble_get_unix_timestamp(void)
 /**
  * 立即采集并发送一次 Telemetry 数据
  */
-static esp_err_t send_telemetry_now(void)
+static esp_err_t send_telemetry_from_sensor(const sensor_data_t *sensor)
 {
     if (!ble_is_connected()) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* 采集传感器数据 */
-    sensor_data_t sensor;
-    esp_err_t ret = sensor_get_latest(&sensor);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to get sensor data, ret=%d", ret);
-        return ret;
+    if (sensor == NULL) {
+        return ESP_ERR_INVALID_ARG;
     }
 
     health_status_t health = health_get_status();
@@ -575,20 +577,15 @@ static esp_err_t send_telemetry_now(void)
     ble_telemetry_t pkt;
     memset(&pkt, 0, sizeof(pkt));
 
-    pkt.temp       = (int16_t)lroundf(health.temperature * 10.0f);
+    pkt.temp       = (int16_t)lroundf(sensor->temperature * 10.0f);
     pkt.heart_rate = health.heart_rate;
     pkt.spo2       = health.spo2;
-    pkt.steps      = pedometer_get_steps();
-    pkt.data_valid = sensor.data_valid;
-    if (health.temp_validity == MEASURE_VALID) {
-        pkt.data_valid |= SENSOR_TEMP;
-    } else {
-        pkt.data_valid &= (uint8_t)~SENSOR_TEMP;
-    }
+    pkt.steps      = sensor->steps;
+    pkt.data_valid = sensor->data_valid;
     pkt.timestamp  = ble_get_unix_timestamp();
 
     /* 发送 Notify */
-    ret = ble_notify_telemetry(&pkt);
+    esp_err_t ret = ble_notify_telemetry(&pkt);
     if (ret == ESP_OK) {
         ESP_LOGD(TAG, "Telemetry sent: temp=%d hr=%d spo2=%d steps=%lu ts=%lu",
                  pkt.temp, pkt.heart_rate, pkt.spo2,
@@ -598,6 +595,37 @@ static esp_err_t send_telemetry_now(void)
     }
 
     return ret;
+}
+
+static esp_err_t send_telemetry_now(void)
+{
+    sensor_data_t sensor;
+    esp_err_t ret = sensor_get_latest(&sensor);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to get sensor data, ret=%d", ret);
+        return ret;
+    }
+
+    sensor.steps = pedometer_get_steps();
+    return send_telemetry_from_sensor(&sensor);
+}
+
+static bool take_temp_snapshot(sensor_data_t *sensor)
+{
+    if (sensor == NULL || s_temp_snapshot_mutex == NULL) {
+        return false;
+    }
+
+    bool has_snapshot = false;
+    xSemaphoreTake(s_temp_snapshot_mutex, portMAX_DELAY);
+    if (s_temp_snapshot_pending) {
+        memcpy(sensor, &s_temp_snapshot, sizeof(sensor_data_t));
+        s_temp_snapshot_pending = false;
+        has_snapshot = true;
+    }
+    xSemaphoreGive(s_temp_snapshot_mutex);
+
+    return has_snapshot;
 }
 
 /**
@@ -615,7 +643,13 @@ static void telemetry_task(void *param)
          * - 正常情况等待 interval 超时后发送
          * - 收到 notify 时立即重新计算间隔 */
         xTaskNotifyWait(0, ULONG_MAX, NULL, pdMS_TO_TICKS(interval));
-        send_telemetry_now();
+
+        sensor_data_t sensor;
+        if (take_temp_snapshot(&sensor)) {
+            send_telemetry_from_sensor(&sensor);
+        } else {
+            send_telemetry_now();
+        }
     }
 }
 
@@ -711,6 +745,12 @@ esp_err_t ble_service_init(void)
     ble_hs_cfg.sync_cb  = ble_on_sync;
     ble_hs_cfg.reset_cb = ble_on_reset;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+
+    s_temp_snapshot_mutex = xSemaphoreCreateMutex();
+    if (s_temp_snapshot_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create temp snapshot mutex");
+        return ESP_ERR_NO_MEM;
+    }
 
     /* 8. 启动 NimBLE host 任务 */
     nimble_port_freertos_init(ble_host_task);

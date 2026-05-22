@@ -158,3 +158,11 @@
 - **后果**: 特定时序下（ESP32 端先按停止报警键再在 APP 端确认），报警记录永远显示"未确认"状态，且后续所有报警记录也可能受影响
 - **解决方案**: (1) `_initRepository` 改为合并策略：加载 SQLite 数据后，将初始化前收到的内存数据（按 eventId 去重）追加到列表中，并补写入 SQLite；(2) `ackAlarm` 改为乐观更新：先设置本地 `isAcked=true` 并通知 UI，再异步发送 BLE 命令和更新 SQLite；找不到记录时返回 false 并设置 `_errorMessage`；(3) `alarm_tab.dart` 中 ackAlarm 调用改为 await 并根据返回值显示 SnackBar 错误提示
 - **涉及文件**: `lib/data/ble_provider.dart`, `lib/ui/tabs/alarm_tab.dart`
+
+---
+### ISSUE-019
+- **发现日期**: 2026-05-22
+- **原因**: 设置页“清除所有数据”直接新建 `SqliteDataRepository` 并调用 `clearAllData()`，只删除 SQLite 中的 `telemetry` 和 `alarm` 表数据，未清空正在驱动主界面的 `BleProvider._telemetryHistory` / `_alarmHistory` 内存缓存，也未触发 `notifyListeners()`。
+- **后果**: 用户确认清除后回到主界面，数据记录和报警记录仍从 Provider 缓存中显示，表现为清除操作无效。
+- **解决方案**: 在 `BleProvider` 新增 `clearAllLocalData()`，统一调用 `_repo.clearAllData()`、清空遥测/报警历史缓存和最新数据，并通知 UI 刷新；设置页改为调用传入的 `BleProvider` 方法，不再直接新建 Repository。
+- **涉及文件**: `lib/data/ble_provider.dart`, `lib/ui/tabs/settings_tab.dart`
